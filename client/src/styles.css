@@ -1,0 +1,188 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1220;
+  --panel: #121a2b;
+  --panel-2: #182338;
+  --text: #f4f7fb;
+  --muted: #9aa7bd;
+  --line: #22314f;
+  --accent: #4f8cff;
+  --danger: #ff6b6b;
+  --success: #2ecc71;
+  --warning: #f5b041;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: linear-gradient(180deg, #0b1220, #0f1728 35%, #101827);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+a { color: inherit; text-decoration: none; }
+button, input {
+  font: inherit;
+}
+button {
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+button:disabled { opacity: .6; }
+input {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+}
+.app-shell {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 16px;
+}
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.app-header h1 { margin: 0; font-size: 1.6rem; }
+.app-header p { margin: 6px 0 0; color: var(--muted); }
+.header-link {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+  border-radius: 14px;
+}
+.toolbar {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.segmented .active { background: var(--accent); }
+.card-grid {
+  display: grid;
+  gap: 14px;
+}
+.resource-card, .details-card {
+  background: rgba(18, 26, 43, 0.95);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 16px;
+  backdrop-filter: blur(10px);
+}
+.resource-card__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+.resource-type, .resource-meta, .runtime-note, .console-box p, .empty-state {
+  color: var(--muted);
+}
+.resource-card h2, .details-card h2, .details-card h3 { margin: 6px 0; }
+.status-badge {
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.status-running { background: rgba(46, 204, 113, .15); color: #8ff0b2; }
+.status-stopped { background: rgba(255, 107, 107, .14); color: #ff9d9d; }
+.status-paused { background: rgba(245, 176, 65, .15); color: #ffd18a; }
+.meters {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 16px 0 10px;
+}
+.meter {
+  background: var(--panel-2);
+  border-radius: 14px;
+  padding: 12px;
+}
+.meter span {
+  display: block;
+  color: var(--muted);
+  font-size: .85rem;
+  margin-bottom: 6px;
+}
+.resource-footnote, .actions-row, .details-grid {
+  display: grid;
+  gap: 10px;
+}
+.resource-footnote {
+  grid-template-columns: 1fr 1fr;
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-bottom: 14px;
+}
+.actions-row {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+.details-link, .console-link {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  background: var(--accent);
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+.empty-state {
+  padding: 18px;
+  text-align: center;
+  background: rgba(18, 26, 43, .7);
+  border-radius: 18px;
+}
+.empty-state.error { color: #ffb0b0; }
+.details-page {
+  display: grid;
+  gap: 14px;
+}
+.back-link { color: var(--muted); }
+.details-grid {
+  grid-template-columns: 1fr 1fr;
+  margin-top: 14px;
+}
+.details-grid div, .network-card {
+  background: var(--panel-2);
+  border-radius: 14px;
+  padding: 12px;
+}
+.details-grid span {
+  display: block;
+  font-size: .85rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.console-box {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.network-list {
+  display: grid;
+  gap: 10px;
+}
+.runtime-box {
+  margin-top: 14px;
+}
+.runtime-box pre {
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #c7d4eb;
+}
+@media (max-width: 600px) {
+  .app-header { flex-direction: column; }
+  .meters, .actions-row, .resource-footnote, .details-grid { grid-template-columns: 1fr; }
+}
