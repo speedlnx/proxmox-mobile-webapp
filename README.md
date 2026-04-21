@@ -1,162 +1,108 @@
 # Proxmox Mobile WebApp
 
-Versione proposta: `0.2.0`
+Versione corrente: `0.3.0`
 
-Applicazione web mobile-first per consultare e gestire VM QEMU e container LXC su Proxmox VE da smartphone, senza esporre direttamente le credenziali del cluster al browser.
+Applicazione web mobile-first per amministrare VM QEMU e container LXC su Proxmox VE, con backend Node.js che gestisce autenticazione, configurazione persistente del target Proxmox e API operative per dashboard e dettaglio risorsa.
 
-## Cosa fa il progetto
+## Cosa e' cambiato in questa release
 
-Il repository contiene una piccola monorepo Node.js con:
+Questa versione porta il progetto molto piu' vicino a un deploy reale:
 
-- `client/`: frontend React + Vite ottimizzato per uso mobile
-- `server/`: backend Express che interroga le API di Proxmox VE e serve anche la build del client in produzione
+- configurazione del server Proxmox interamente dal backend tramite pagina `Impostazioni`
+- persistenza della configurazione su file server-side
+- supporto a test connessione prima del salvataggio
+- protezione opzionale del pannello impostazioni con `APP_ADMIN_TOKEN`
+- validazione piu' robusta della configurazione
+- headers di sicurezza HTTP di base
+- gestione errori lato backend piu' coerente
+- setup guidato quando il backend non e' ancora configurato
 
-Il backend gestisce l'autenticazione verso Proxmox in due modalita':
+## Architettura
 
-- token API Proxmox tramite `PVEAPIToken`
-- login username/password con cache di `ticket` e token CSRF
+Il repository e' una monorepo Node.js con due workspace:
 
-## Funzionalita' implementate
+- `client/`: frontend React + Vite
+- `server/`: backend Express che parla con Proxmox VE e serve la build del frontend in produzione
 
-- dashboard con elenco di VM e container LXC non template
-- ordinamento alfabetico delle risorse
-- filtro per tipo risorsa: tutte, VM QEMU, container LXC
+In produzione il backend puo' servire direttamente `client/dist`, quindi e' possibile distribuire un solo servizio Node.js dietro reverse proxy.
+
+## Funzionalita' principali
+
+### Operativita' Proxmox
+
+- elenco VM e container LXC non template
+- ordinamento alfabetico
 - ricerca per nome, nodo o VMID
-- refresh automatico della dashboard ogni 15 secondi
-- stato operativo della risorsa con badge visuale
-- indicatori rapidi di CPU, RAM e disco
-- azioni rapide dalla dashboard:
-  - `start`
-  - `shutdown`
-  - `reboot`
-- pagina di dettaglio per singola risorsa
-- visualizzazione dettagliata di:
-  - nodo
-  - VMID
-  - CPU e numero vCPU
-  - memoria usata/totale
-  - disco usato/totale
-  - uptime
-  - tipo sistema operativo
-- lettura configurazione rete da Proxmox
-- tentativo di lettura dello stato runtime delle interfacce:
-  - VM QEMU: endpoint `agent/network-get-interfaces`
-  - LXC: endpoint `interfaces`
-- pulsante per apertura della console nativa Proxmox in nuova scheda
-- fallback lato server per servire il frontend buildato in produzione
+- filtro per tipo risorsa
+- refresh automatico dashboard ogni 15 secondi
+- azioni rapide `start`, `shutdown`, `reboot`
+- dettaglio risorsa con CPU, RAM, disco, uptime, OS type e rete
+- apertura console Proxmox in nuova scheda
 
-## Funzionalita' non presenti al momento
+### Configurazione backend
 
-- autenticazione utenti applicativa separata da Proxmox
-- multiutente, ruoli o audit interno
-- console incorporata nell'interfaccia
-- cronologia task Proxmox e polling degli UPID
-- metriche storiche o grafici
-- test automatici
-- pipeline CI/CD
+- pannello `Impostazioni` raggiungibile dall'app
+- configurazione URL Proxmox dal backend
+- supporto a due modalita' di autenticazione:
+  - token API
+  - username/password
+- possibilita' di mantenere secret o password gia' salvati senza reinserirli
+- test di connessione verso Proxmox prima del salvataggio definitivo
+- salvataggio della configurazione in `server/data/app-config.json` o nel path definito da `APP_CONFIG_PATH`
+- possibilita' di bloccare le API di configurazione con `APP_ADMIN_TOKEN`
 
-## Architettura tecnica
+## Endpoint API
 
-### Frontend
+### Pubblici applicativi
 
-Stack:
+- `GET /api/health`
+- `GET /api/resources`
+- `GET /api/resources/:type/:node/:vmid`
+- `POST /api/resources/:type/:node/:vmid/:action`
 
-- React 18
-- React Router 6
-- Vite 6
+### Amministrazione backend
 
-Pagine principali:
+- `GET /api/settings`
+- `POST /api/settings/test`
+- `PUT /api/settings`
 
-- `DashboardPage`: elenco risorse, ricerca, filtro, refresh periodico, azioni rapide
-- `DetailsPage`: metriche, dati rete e link alla console
-
-Componenti:
-
-- `ResourceCard`: card sintetica della risorsa
-- `StatusBadge`: badge di stato (`running`, `stopped`, `paused`)
-
-### Backend
-
-Stack:
-
-- Node.js
-- Express
-- Axios
-- dotenv
-- cors
-
-Responsabilita' del server:
-
-- autenticarsi verso Proxmox VE
-- chiamare le API `/api2/json`
-- normalizzare i dati per il frontend
-- eseguire azioni power management sulle risorse
-- proteggere browser e UI dalle credenziali dirette di Proxmox
-- servire gli asset statici del frontend in produzione
-
-## Endpoint esposti dall'app
-
-### `GET /api/health`
-
-Restituisce stato base dell'app, URL Proxmox configurato e modalita' di autenticazione attiva.
-
-### `GET /api/resources`
-
-Restituisce l'elenco delle risorse di tipo `qemu` e `lxc`, escludendo i template.
-
-### `GET /api/resources/:type/:node/:vmid`
-
-Restituisce:
-
-- stato corrente della risorsa
-- configurazione della risorsa
-- dati di rete parsati
-- eventuali interfacce runtime
-- URL sicuro per aprire la console Proxmox
-
-### `POST /api/resources/:type/:node/:vmid/:action`
-
-Azioni consentite:
-
-- `start`
-- `shutdown`
-- `reboot`
-- `stop`
-
-Nota: il frontend al momento usa `start`, `shutdown` e `reboot`; il server supporta anche `stop`.
+Se `APP_ADMIN_TOKEN` e' valorizzato, questi endpoint richiedono l'header `x-admin-token`.
 
 ## Requisiti
 
-- Node.js 20 o superiore
-- accesso a un'istanza Proxmox VE raggiungibile dal server
-- credenziali Proxmox oppure token API con permessi adeguati
+- Node.js 20+
+- accesso di rete dal backend verso Proxmox VE
+- credenziali Proxmox o token API con privilegi adeguati
 
 ## Configurazione ambiente
 
-Copiare il file di esempio:
+File di esempio:
 
 ```bash
 cp .env.example .env
 ```
 
-Variabili supportate dal backend:
+Variabili supportate:
 
-| Variabile | Obbligatoria | Descrizione |
-| --- | --- | --- |
-| `PROXMOX_BASE_URL` | si | URL base Proxmox, ad esempio `https://pve.example.com:8006` |
-| `PROXMOX_TOKEN_ID` | no | ID token API Proxmox |
-| `PROXMOX_TOKEN_SECRET` | no | Secret del token API |
-| `PROXMOX_REALM` | no | Realm usato con login classico, default `pam` |
-| `PROXMOX_USERNAME` | no | Username Proxmox, con o senza `@realm` |
-| `PROXMOX_PASSWORD` | no | Password Proxmox |
-| `PORT` | no | Porta del backend, default `8787` |
-| `ALLOW_INSECURE_TLS` | no | Se `true`, disabilita la verifica del certificato TLS del server Proxmox |
-| `APP_BASE_URL` | no | URL pubblico dell'app, usato per il log di startup |
+| Variabile | Descrizione |
+| --- | --- |
+| `PORT` | Porta del backend, default `8787` |
+| `APP_BASE_URL` | URL pubblico dell'app per logging e deploy |
+| `APP_ADMIN_TOKEN` | Token opzionale per proteggere la configurazione backend |
+| `APP_CONFIG_PATH` | Path del file JSON di configurazione persistente |
+| `CORS_ORIGIN` | Origin consentita se il frontend gira su dominio separato |
+| `PROXMOX_BASE_URL` | Default iniziale Proxmox, usato solo come fallback |
+| `PROXMOX_TOKEN_ID` | Default iniziale token ID |
+| `PROXMOX_TOKEN_SECRET` | Default iniziale token secret |
+| `PROXMOX_REALM` | Default realm per login password |
+| `PROXMOX_USERNAME` | Default username |
+| `PROXMOX_PASSWORD` | Default password |
+| `ALLOW_INSECURE_TLS` | Se `true`, accetta certificati self-signed verso Proxmox |
 
-Regola di autenticazione:
+Nota importante:
 
-- usare `PROXMOX_TOKEN_ID` e `PROXMOX_TOKEN_SECRET` per il metodo consigliato
-- in alternativa usare `PROXMOX_USERNAME` e `PROXMOX_PASSWORD`
+- le variabili `PROXMOX_*` fungono da configurazione iniziale o fallback
+- una volta salvata la configurazione dal pannello backend, il server usa il file persistito
 
 ## Avvio in sviluppo
 
@@ -166,7 +112,7 @@ Installazione dipendenze:
 npm install
 ```
 
-Avvio client + server:
+Avvio client e server:
 
 ```bash
 npm run dev
@@ -174,32 +120,25 @@ npm run dev
 
 URL locali:
 
-- frontend Vite: `http://localhost:5173`
-- backend Express: `http://localhost:8787`
+- frontend: `http://localhost:5173`
+- backend: `http://localhost:8787`
 
-In sviluppo Vite proxya le richieste `/api` al backend locale.
+Durante lo sviluppo Vite fa proxy delle richieste `/api` verso il backend.
 
-## Build e avvio in produzione
+## Deploy consigliato
 
-Build frontend:
+Per un deploy piu' sicuro:
 
-```bash
-npm run build
-```
+- esporre l'app dietro Nginx, Traefik o Nginx Proxy Manager
+- usare HTTPS valido lato pubblico
+- impostare `APP_ADMIN_TOKEN`
+- limitare l'accesso di amministrazione tramite VPN, IP allowlist o Zero Trust
+- mantenere `ALLOW_INSECURE_TLS=false` in produzione, salvo ambienti controllati
+- conservare il file di configurazione persistente fuori dal versionamento
 
-Avvio server:
+## Permessi Proxmox suggeriti
 
-```bash
-npm run start
-```
-
-Quando `client/dist` esiste, il backend serve direttamente l'app React buildata.
-
-## Sicurezza e permessi consigliati
-
-Uso consigliato: token API dedicato con privilegi minimi.
-
-Permessi tipicamente utili:
+Per un token dedicato o un utente tecnico:
 
 - `VM.Audit`
 - `VM.PowerMgmt`
@@ -207,57 +146,35 @@ Permessi tipicamente utili:
 - `Datastore.Audit`
 - `Sys.Audit`
 
-Applicare i permessi al path corretto in base al proprio cluster, pool o nodo.
+Applicare i permessi al path corretto del proprio cluster, nodo, pool o risorsa.
 
-Attenzione:
-
-- `ALLOW_INSECURE_TLS=true` e' comodo in laboratorio ma non e' consigliato in produzione
-- l'app non implementa autenticazione aggiuntiva: se pubblicata su Internet va protetta con reverse proxy, VPN o accesso Zero Trust
-
-## Limitazioni operative osservate nel codice
-
-- i dettagli runtime di rete per le VM dipendono dal QEMU Guest Agent
-- la console e' aperta nella UI nativa di Proxmox, non incorporata nell'app
-- la dashboard aggiorna periodicamente ma la pagina dettaglio non esegue refresh automatico
-- il frontend usa `window.confirm` e `window.alert`, quindi l'esperienza e' volutamente semplice e diretta
-
-## Struttura del repository
+## Struttura repository
 
 ```text
 .
 |-- client/
-|   |-- src/
-|   |   |-- components/
-|   |   |-- pages/
-|   |   |-- App.jsx
-|   |   |-- main.jsx
-|   |   `-- styles.css
-|   |-- index.html
-|   |-- package.json
-|   `-- vite.config.js
 |-- server/
+|   |-- data/
 |   |-- index.js
 |   `-- package.json
 |-- package.json
 |-- README.md
-`-- LICENSE
+`-- .env.example
 ```
 
-## Versione assegnata
+## Limitazioni attuali
 
-Ho assegnato la versione `0.2.0` per rappresentare uno stato gia' utilizzabile e documentato, ma ancora chiaramente pre-1.0:
+- la console resta quella nativa Proxmox aperta in una nuova scheda
+- i dettagli runtime di rete per le VM dipendono dal QEMU Guest Agent
+- non sono ancora presenti test automatici o pipeline CI/CD
+- non esiste un sistema multiutente interno all'app
 
-- esiste una feature set coerente end-to-end
-- il progetto e' pubblicabile e usabile in LAN/VPN
-- mancano ancora test, hardening e alcune rifiniture da release stabile `1.0.0`
+## Roadmap ragionata
 
-## Stato attuale del progetto
+Per arrivare a una release ancora piu' forte sul piano operativo:
 
-Il progetto e' un MVP funzionante per amministrazione rapida da mobile di risorse Proxmox, particolarmente adatto a uso personale, homelab o accesso operativo veloce dietro rete fidata.
-
-Per un rilascio piu' maturo i prossimi passi consigliati sarebbero:
-
-- introdurre test minimi su backend e frontend
-- gestire task UPID e feedback asincrono delle azioni
-- migliorare autenticazione e protezione dell'accesso pubblico
-- aggiungere refresh opzionale anche sulla vista dettaglio
+- aggiungere test backend e frontend
+- introdurre logging strutturato e audit trail amministrativo
+- gestire polling degli UPID e stato task Proxmox
+- aggiungere supporto PWA e notifiche
+- valutare cifratura at-rest del file di configurazione

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import ResourceCard from '../components/ResourceCard';
 
 export default function DashboardPage() {
@@ -8,6 +9,7 @@ export default function DashboardPage() {
   const [search, setSearch] = useState('');
   const [pendingKey, setPendingKey] = useState('');
   const [error, setError] = useState('');
+  const [setupRequired, setSetupRequired] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -15,7 +17,11 @@ export default function DashboardPage() {
     try {
       const response = await fetch('/api/resources');
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Errore nel caricamento');
+      if (!response.ok) {
+        setSetupRequired(data.code === 'SETUP_REQUIRED');
+        throw new Error(data.error || 'Errore nel caricamento');
+      }
+      setSetupRequired(false);
       setItems(data.items);
     } catch (err) {
       setError(err.message);
@@ -69,6 +75,13 @@ export default function DashboardPage() {
 
       {loading && <div className="empty-state">Caricamento in corso…</div>}
       {error && <div className="empty-state error">{error}</div>}
+      {setupRequired ? (
+        <div className="setup-card">
+          <h3>Completa il setup del backend</h3>
+          <p>Il server Proxmox non e&apos; ancora configurato. Vai nelle impostazioni per salvare host e credenziali dal backend.</p>
+          <Link to="/settings" className="console-link">Apri impostazioni</Link>
+        </div>
+      ) : null}
       {!loading && !error && filteredItems.length === 0 && <div className="empty-state">Nessuna risorsa trovata</div>}
 
       <div className="card-grid">

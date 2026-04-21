@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import fs from 'fs';
+import https from 'https';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -11,57 +12,266 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const PROXMOX_BASE_URL = process.env.PROXMOX_BASE_URL || 'https://proxmox.example.com:8006';
-const PROXMOX_TOKEN_ID = process.env.PROXMOX_TOKEN_ID || '';
-const PROXMOX_TOKEN_SECRET = process.env.PROXMOX_TOKEN_SECRET || '';
-const PROXMOX_REALM = process.env.PROXMOX_REALM || 'pam';
-const PROXMOX_USERNAME = process.env.PROXMOX_USERNAME || '';
-const PROXMOX_PASSWORD = process.env.PROXMOX_PASSWORD || '';
 const APP_PORT = Number(process.env.PORT || 8787);
-const ALLOW_INSECURE_TLS = String(process.env.ALLOW_INSECURE_TLS || 'true') === 'true';
 const APP_BASE_URL = process.env.APP_BASE_URL || `http://localhost:${APP_PORT}`;
+const APP_ADMIN_TOKEN = process.env.APP_ADMIN_TOKEN || '';
+const APP_CONFIG_PATH = path.resolve(__dirname, process.env.APP_CONFIG_PATH || './data/app-config.json');
 const CLIENT_DIST_DIR = path.resolve(__dirname, '../client/dist');
+const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
+const APP_VERSION = '0.3.0';
 
-const httpsAgent = new (await import('https')).Agent({
-  rejectUnauthorized: !ALLOW_INSECURE_TLS,
+const ENV_PROXMOX_DEFAULTS = {
+  baseUrl: normalizeBaseUrl(process.env.PROXMOX_BASE_URL || ''),
+  allowInsecureTls: parseBoolean(process.env.ALLOW_INSECURE_TLS, false),
+  authMode: '',
+  tokenId: process.env.PROXMOX_TOKEN_ID || '',
+  tokenSecret: process.env.PROXMOX_TOKEN_SECRET || '',
+  realm: process.env.PROXMOX_REALM || 'pam',
+  username: process.env.PROXMOX_USERNAME || '',
+  password: process.env.PROXMOX_PASSWORD || '',
+};
+
+ENV_PROXMOX_DEFAULTS.authMode = deriveAuthMode(ENV_PROXMOX_DEFAULTS);
+
+const app = express();
+
+app.disable('x-powered-by');
+
+if (CORS_ORIGIN) {
+  app.use(cors({ origin: CORS_ORIGIN }));
+}
+
+app.use(express.json({ limit: '100kb' }));
+app.use((_req, res, next) => {
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  next();
 });
 
 let authCache = {
+  cacheKey: '',
   ticket: null,
   csrf: null,
   expiresAt: 0,
 };
 
-function hasApiToken() {
-  return Boolean(PROXMOX_TOKEN_ID && PROXMOX_TOKEN_SECRET);
+let persistedSettings = loadPersistedSettings();
+
+function parseBoolean(value, fallback = false) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return fallback;
+  return value.toLowerCase() === 'true';
 }
 
-async function loginWithPassword() {
-  if (!PROXMOX_USERNAME || !PROXMOX_PASSWORD) {
-    throw new Error('Configurazione mancante: impostare PROXMOX_USERNAME e PROXMOX_PASSWORD oppure token API.');
+function normalizeBaseUrl(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function deriveAuthMode(config) {
+  if (config.authMode === 'api-token' || config.authMode === 'password') {
+    return config.authMode;
+  }
+  if (config.tokenId && config.tokenSecret) {
+    return 'api-token';
+  }
+  if (config.username && config.password) {
+    return 'password';
+  }
+  return '';
+}
+
+function getEffectiveProxmoxConfig() {
+  const merged = {
+    ...ENV_PROXMOX_DEFAULTS,
+    ...(persistedSettings.proxmox || {}),
+  };
+
+  merged.baseUrl = normalizeBaseUrl(merged.baseUrl);
+  merged.allowInsecureTls = Boolean(merged.allowInsecureTls);
+  merged.realm = String(merged.realm || 'pam').trim() || 'pam';
+  merged.tokenId = String(merged.tokenId || '').trim();
+  merged.tokenSecret = String(merged.tokenSecret || '');
+  merged.username = String(merged.username || '').trim();
+  merged.password = String(merged.password || '');
+  merged.authMode = deriveAuthMode(merged);
+
+  return merged;
+}
+
+function isConfigurationComplete(config) {
+  if (!config.baseUrl) return false;
+  if (config.authMode === 'api-token') {
+    return Boolean(config.tokenId && config.tokenSecret);
+  }
+  if (config.authMode === 'password') {
+    return Boolean(config.username && config.password);
+  }
+  return false;
+}
+
+function validateProxmoxConfig(config) {
+  if (!config.baseUrl) {
+    throw createHttpError(400, 'PROXMOX_BASE_URL_REQUIRED', 'Inserire l\'URL del server Proxmox.');
   }
 
+  let url;
+  try {
+    url = new URL(config.baseUrl);
+  } catch (_error) {
+    throw createHttpError(400, 'PROXMOX_BASE_URL_INVALID', 'L\'URL del server Proxmox non e\' valido.');
+  }
+
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw createHttpError(400, 'PROXMOX_BASE_URL_PROTOCOL', 'Usare un URL Proxmox con protocollo http o https.');
+  }
+
+  if (!config.authMode) {
+    throw createHttpError(400, 'PROXMOX_AUTH_MODE_REQUIRED', 'Selezionare una modalita\' di autenticazione.');
+  }
+
+  if (config.authMode === 'api-token') {
+    if (!config.tokenId || !config.tokenSecret) {
+      throw createHttpError(400, 'PROXMOX_TOKEN_REQUIRED', 'Per il token API servono token ID e token secret.');
+    }
+  }
+
+  if (config.authMode === 'password') {
+    if (!config.username || !config.password) {
+      throw createHttpError(400, 'PROXMOX_PASSWORD_REQUIRED', 'Per il login classico servono username e password.');
+    }
+  }
+}
+
+function createHttpError(status, code, message, extra = {}) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.extra = extra;
+  return error;
+}
+
+function maskSecret(value) {
+  if (!value) return '';
+  if (value.length <= 6) return `${value.slice(0, 1)}***`;
+  return `${value.slice(0, 3)}***${value.slice(-2)}`;
+}
+
+function buildSettingsResponse() {
+  const config = getEffectiveProxmoxConfig();
+  return {
+    configured: isConfigurationComplete(config),
+    updatedAt: persistedSettings.updatedAt || null,
+    source: persistedSettings.updatedAt ? 'persisted' : 'environment',
+    adminTokenRequired: Boolean(APP_ADMIN_TOKEN),
+    settings: buildSettingsSnapshot(config),
+  };
+}
+
+function buildSettingsSnapshot(config) {
+  return {
+    baseUrl: config.baseUrl,
+    allowInsecureTls: config.allowInsecureTls,
+    authMode: config.authMode || 'api-token',
+    tokenId: config.tokenId,
+    tokenSecretMasked: maskSecret(config.tokenSecret),
+    hasTokenSecret: Boolean(config.tokenSecret),
+    realm: config.realm,
+    username: config.username,
+    passwordMasked: maskSecret(config.password),
+    hasPassword: Boolean(config.password),
+  };
+}
+
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    console.error(`Impossibile leggere ${filePath}:`, error.message);
+    return null;
+  }
+}
+
+function loadPersistedSettings() {
+  if (!fs.existsSync(APP_CONFIG_PATH)) {
+    return { updatedAt: null, proxmox: {} };
+  }
+
+  const parsed = readJsonFile(APP_CONFIG_PATH);
+  if (!parsed || typeof parsed !== 'object') {
+    return { updatedAt: null, proxmox: {} };
+  }
+
+  return {
+    updatedAt: parsed.updatedAt || null,
+    proxmox: parsed.proxmox && typeof parsed.proxmox === 'object' ? parsed.proxmox : {},
+  };
+}
+
+function persistSettings(config) {
+  const nextStore = {
+    updatedAt: new Date().toISOString(),
+    proxmox: config,
+  };
+
+  fs.mkdirSync(path.dirname(APP_CONFIG_PATH), { recursive: true });
+
+  const tempFile = `${APP_CONFIG_PATH}.tmp`;
+  fs.writeFileSync(tempFile, JSON.stringify(nextStore, null, 2), { encoding: 'utf8', mode: 0o600 });
+  fs.renameSync(tempFile, APP_CONFIG_PATH);
+  try {
+    fs.chmodSync(APP_CONFIG_PATH, 0o600);
+  } catch (_error) {
+    // Ignore chmod failures on filesystems that do not support unix permissions.
+  }
+
+  persistedSettings = nextStore;
+  authCache = { cacheKey: '', ticket: null, csrf: null, expiresAt: 0 };
+}
+
+function createHttpsAgent(config) {
+  if (!config.baseUrl.startsWith('https://')) return undefined;
+  return new https.Agent({
+    rejectUnauthorized: !config.allowInsecureTls,
+  });
+}
+
+function createAuthCacheKey(config) {
+  return [config.baseUrl, config.authMode, config.realm, config.username, config.password].join('|');
+}
+
+async function loginWithPassword(config) {
+  if (!config.username || !config.password) {
+    throw createHttpError(
+      400,
+      'PROXMOX_PASSWORD_REQUIRED',
+      'Configurazione mancante: impostare username e password Proxmox oppure un token API.'
+    );
+  }
+
+  const cacheKey = createAuthCacheKey(config);
   const now = Date.now();
-  if (authCache.ticket && authCache.expiresAt > now + 60_000) {
+  if (authCache.cacheKey === cacheKey && authCache.ticket && authCache.expiresAt > now + 60_000) {
     return authCache;
   }
 
-  const username = PROXMOX_USERNAME.includes('@') ? PROXMOX_USERNAME : `${PROXMOX_USERNAME}@${PROXMOX_REALM}`;
-  const url = `${PROXMOX_BASE_URL}/api2/json/access/ticket`;
+  const username = config.username.includes('@') ? config.username : `${config.username}@${config.realm}`;
   const params = new URLSearchParams();
   params.set('username', username);
-  params.set('password', PROXMOX_PASSWORD);
+  params.set('password', config.password);
 
-  const { data } = await axios.post(url, params.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    httpsAgent,
-  });
+  const { data } = await axios.post(
+    `${config.baseUrl}/api2/json/access/ticket`,
+    params.toString(),
+    {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      httpsAgent: createHttpsAgent(config),
+      timeout: 15_000,
+    }
+  );
 
   authCache = {
+    cacheKey,
     ticket: data.data.ticket,
     csrf: data.data.CSRFPreventionToken,
     expiresAt: Date.now() + 2 * 60 * 60 * 1000,
@@ -70,30 +280,90 @@ async function loginWithPassword() {
   return authCache;
 }
 
-async function proxmoxRequest(method, apiPath, { params, data, headers = {} } = {}) {
-  const url = `${PROXMOX_BASE_URL}/api2/json${apiPath}`;
-  const requestHeaders = { ...headers };
+async function proxmoxRequestWithConfig(config, method, apiPath, { params, data, headers = {}, retry = true } = {}) {
+  validateProxmoxConfig(config);
 
-  if (hasApiToken()) {
-    requestHeaders.Authorization = `PVEAPIToken=${PROXMOX_TOKEN_ID}=${PROXMOX_TOKEN_SECRET}`;
+  const requestHeaders = { ...headers };
+  if (config.authMode === 'api-token') {
+    requestHeaders.Authorization = `PVEAPIToken=${config.tokenId}=${config.tokenSecret}`;
   } else {
-    const auth = await loginWithPassword();
+    const auth = await loginWithPassword(config);
     requestHeaders.Cookie = `PVEAuthCookie=${auth.ticket}`;
     if (method !== 'GET') {
       requestHeaders.CSRFPreventionToken = auth.csrf;
     }
   }
 
-  const response = await axios({
-    method,
-    url,
-    params,
-    data,
-    headers: requestHeaders,
-    httpsAgent,
-  });
+  try {
+    const response = await axios({
+      method,
+      url: `${config.baseUrl}/api2/json${apiPath}`,
+      params,
+      data,
+      headers: requestHeaders,
+      httpsAgent: createHttpsAgent(config),
+      timeout: 20_000,
+    });
 
-  return response.data.data;
+    return response.data.data;
+  } catch (error) {
+    if (retry && config.authMode === 'password' && error.response?.status === 401) {
+      authCache = { cacheKey: '', ticket: null, csrf: null, expiresAt: 0 };
+      return proxmoxRequestWithConfig(config, method, apiPath, { params, data, headers, retry: false });
+    }
+    throw error;
+  }
+}
+
+async function proxmoxRequest(method, apiPath, options) {
+  const config = getEffectiveProxmoxConfig();
+  if (!isConfigurationComplete(config)) {
+    throw createHttpError(
+      503,
+      'SETUP_REQUIRED',
+      'Il server Proxmox non e\' ancora configurato. Apri Impostazioni e completa il setup.'
+    );
+  }
+  return proxmoxRequestWithConfig(config, method, apiPath, options);
+}
+
+async function testProxmoxConfiguration(config) {
+  const [version, clusterStatus] = await Promise.all([
+    proxmoxRequestWithConfig(config, 'GET', '/version'),
+    proxmoxRequestWithConfig(config, 'GET', '/cluster/status'),
+  ]);
+
+  return {
+    version,
+    cluster: Array.isArray(clusterStatus) ? clusterStatus : [],
+  };
+}
+
+function normalizeSubmittedConfig(input = {}) {
+  const current = getEffectiveProxmoxConfig();
+  const authMode = String(input.authMode || current.authMode || '').trim();
+  const baseUrl = normalizeBaseUrl(input.baseUrl ?? current.baseUrl);
+  const allowInsecureTls =
+    typeof input.allowInsecureTls === 'boolean'
+      ? input.allowInsecureTls
+      : current.allowInsecureTls;
+  const realm = String(input.realm ?? current.realm ?? 'pam').trim() || 'pam';
+  const username = String(input.username ?? current.username ?? '').trim();
+  const tokenId = String(input.tokenId ?? current.tokenId ?? '').trim();
+
+  const passwordInput = typeof input.password === 'string' ? input.password : undefined;
+  const tokenSecretInput = typeof input.tokenSecret === 'string' ? input.tokenSecret : undefined;
+
+  return {
+    baseUrl,
+    allowInsecureTls,
+    authMode,
+    tokenId,
+    tokenSecret: tokenSecretInput === undefined || tokenSecretInput === '' ? current.tokenSecret : tokenSecretInput,
+    realm,
+    username,
+    password: passwordInput === undefined || passwordInput === '' ? current.password : passwordInput,
+  };
 }
 
 function normalizeResource(item) {
@@ -185,16 +455,111 @@ function parseVmNetworkConfig(config) {
 }
 
 function safeConsoleUrl({ type, node, vmid }) {
+  const config = getEffectiveProxmoxConfig();
   const encodedNode = encodeURIComponent(node);
   const encodedVmid = encodeURIComponent(String(vmid));
   if (type === 'qemu') {
-    return `${PROXMOX_BASE_URL}/?console=kvm&novnc=1&vmid=${encodedVmid}&node=${encodedNode}`;
+    return `${config.baseUrl}/?console=kvm&novnc=1&vmid=${encodedVmid}&node=${encodedNode}`;
   }
-  return `${PROXMOX_BASE_URL}/?console=lxc&xtermjs=1&vmid=${encodedVmid}&node=${encodedNode}`;
+  return `${config.baseUrl}/?console=lxc&xtermjs=1&vmid=${encodedVmid}&node=${encodedNode}`;
+}
+
+function requireAdminToken(req, res, next) {
+  if (!APP_ADMIN_TOKEN) return next();
+  if (req.get('x-admin-token') === APP_ADMIN_TOKEN) return next();
+  return res.status(401).json({
+    error: 'Token amministrativo non valido o mancante.',
+    code: 'ADMIN_TOKEN_REQUIRED',
+  });
+}
+
+function extractClientError(error, fallbackMessage) {
+  if (error.status && error.code) {
+    return {
+      status: error.status,
+      payload: {
+        error: error.message,
+        code: error.code,
+        ...error.extra,
+      },
+    };
+  }
+
+  if (axios.isAxiosError(error)) {
+    const status = error.response?.status || 502;
+    const proxmoxMessage =
+      error.response?.data?.errors
+        ? Object.values(error.response.data.errors).join(', ')
+        : error.response?.data?.message || error.response?.data?.error;
+
+    return {
+      status,
+      payload: {
+        error: proxmoxMessage || error.message || fallbackMessage,
+        code: 'PROXMOX_REQUEST_FAILED',
+        details: error.response?.data || null,
+      },
+    };
+  }
+
+  return {
+    status: 500,
+    payload: {
+      error: fallbackMessage,
+      code: 'UNEXPECTED_ERROR',
+    },
+  };
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, proxmox: PROXMOX_BASE_URL, authMode: hasApiToken() ? 'api-token' : 'password' });
+  const config = getEffectiveProxmoxConfig();
+  res.json({
+    ok: true,
+    version: APP_VERSION,
+    configured: isConfigurationComplete(config),
+    proxmox: config.baseUrl || null,
+    authMode: config.authMode || null,
+    adminProtected: Boolean(APP_ADMIN_TOKEN),
+    configUpdatedAt: persistedSettings.updatedAt || null,
+  });
+});
+
+app.get('/api/settings', requireAdminToken, (_req, res) => {
+  res.json(buildSettingsResponse());
+});
+
+app.post('/api/settings/test', requireAdminToken, async (req, res) => {
+  try {
+    const config = normalizeSubmittedConfig(req.body);
+    validateProxmoxConfig(config);
+    const result = await testProxmoxConfiguration(config);
+    res.json({
+      ok: true,
+      result,
+      settings: buildSettingsSnapshot(config),
+    });
+  } catch (error) {
+    const { status, payload } = extractClientError(error, 'Connessione a Proxmox non riuscita.');
+    res.status(status).json(payload);
+  }
+});
+
+app.put('/api/settings', requireAdminToken, async (req, res) => {
+  try {
+    const config = normalizeSubmittedConfig(req.body);
+    validateProxmoxConfig(config);
+    await testProxmoxConfiguration(config);
+    persistSettings(config);
+
+    res.json({
+      ok: true,
+      message: 'Configurazione Proxmox salvata correttamente.',
+      ...buildSettingsResponse(),
+    });
+  } catch (error) {
+    const { status, payload } = extractClientError(error, 'Salvataggio configurazione non riuscito.');
+    res.status(status).json(payload);
+  }
 });
 
 app.get('/api/resources', async (_req, res) => {
@@ -207,14 +572,15 @@ app.get('/api/resources', async (_req, res) => {
 
     res.json({ items });
   } catch (error) {
-    res.status(500).json({ error: error.message, details: error.response?.data || null });
+    const { status, payload } = extractClientError(error, 'Errore nel caricamento delle risorse.');
+    res.status(status).json(payload);
   }
 });
 
 app.get('/api/resources/:type/:node/:vmid', async (req, res) => {
   const { type, node, vmid } = req.params;
   if (!['qemu', 'lxc'].includes(type)) {
-    return res.status(400).json({ error: 'Tipo non valido' });
+    return res.status(400).json({ error: 'Tipo non valido', code: 'INVALID_RESOURCE_TYPE' });
   }
 
   try {
@@ -258,13 +624,10 @@ app.get('/api/resources/:type/:node/:vmid', async (req, res) => {
         config: parsedNetwork,
         runtime: runtimeInterfaces,
       },
-      raw: {
-        status,
-        config,
-      },
     });
   } catch (error) {
-    res.status(500).json({ error: error.message, details: error.response?.data || null });
+    const { status, payload } = extractClientError(error, 'Errore nel caricamento del dettaglio risorsa.');
+    res.status(status).json(payload);
   }
 });
 
@@ -272,17 +635,18 @@ app.post('/api/resources/:type/:node/:vmid/:action', async (req, res) => {
   const { type, node, vmid, action } = req.params;
   const allowedActions = new Set(['start', 'shutdown', 'reboot', 'stop']);
   if (!['qemu', 'lxc'].includes(type)) {
-    return res.status(400).json({ error: 'Tipo non valido' });
+    return res.status(400).json({ error: 'Tipo non valido', code: 'INVALID_RESOURCE_TYPE' });
   }
   if (!allowedActions.has(action)) {
-    return res.status(400).json({ error: 'Azione non valida' });
+    return res.status(400).json({ error: 'Azione non valida', code: 'INVALID_RESOURCE_ACTION' });
   }
 
   try {
     const result = await proxmoxRequest('POST', `/nodes/${node}/${type}/${vmid}/status/${action}`);
     res.json({ ok: true, upid: result });
   } catch (error) {
-    res.status(500).json({ error: error.message, details: error.response?.data || null });
+    const { status, payload } = extractClientError(error, 'Operazione non riuscita.');
+    res.status(status).json(payload);
   }
 });
 
@@ -295,5 +659,6 @@ if (fs.existsSync(CLIENT_DIST_DIR)) {
 }
 
 app.listen(APP_PORT, () => {
-  console.log(`Proxmox Mobile WebApp in ascolto su ${APP_BASE_URL}`);
+  console.log(`Proxmox Mobile WebApp ${APP_VERSION} in ascolto su ${APP_BASE_URL}`);
+  console.log(`Configurazione runtime: ${APP_CONFIG_PATH}`);
 });

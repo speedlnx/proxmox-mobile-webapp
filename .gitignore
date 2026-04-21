@@ -4,3 +4,5 @@ server/node_modules/
 client/dist/
 .env
 .DS_Store
+server/data/*.json
+!server/data/.gitkeep
