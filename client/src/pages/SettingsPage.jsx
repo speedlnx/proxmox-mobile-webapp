@@ -58,8 +58,10 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [warning, setWarning] = useState('');
 
   useEffect(() => {
     storeAdminToken(adminToken);
@@ -117,6 +119,7 @@ export default function SettingsPage() {
 
   async function callSettingsEndpoint(endpoint, method, workingSetter) {
     setMessage('');
+    setWarning('');
     setError('');
     workingSetter(true);
 
@@ -144,6 +147,10 @@ export default function SettingsPage() {
         setMessage(payload.message || `Connessione Proxmox verificata con successo${version}.`);
       }
 
+      if (payload.warning) {
+        setWarning(payload.warning);
+      }
+
       if (payload.settings) {
         setForm(applySettingsToForm(payload.settings));
       }
@@ -167,6 +174,47 @@ export default function SettingsPage() {
     event.preventDefault();
     await callSettingsEndpoint('/api/settings', 'PUT', setSaving);
     await loadSettings();
+  }
+
+  async function handleClearCredentials() {
+    const confirmed = window.confirm('Vuoi cancellare dal backend tutte le credenziali Proxmox salvate?');
+    if (!confirmed) return;
+
+    setMessage('');
+    setWarning('');
+    setError('');
+    setClearing(true);
+
+    try {
+      const response = await fetch('/api/settings/credentials', {
+        method: 'DELETE',
+        headers: buildHeaders(adminToken),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Cancellazione credenziali non riuscita');
+
+      setMessage(payload.message || 'Credenziali cancellate correttamente.');
+      setSettingsInfo(payload);
+      if (payload.settings) {
+        setForm(applySettingsToForm(payload.settings));
+      } else {
+        setForm((current) => ({
+          ...current,
+          authMode: 'api-token',
+          tokenId: '',
+          tokenSecret: '',
+          username: '',
+          password: '',
+        }));
+      }
+
+      await loadHealth();
+      await loadSettings();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setClearing(false);
+    }
   }
 
   return (
@@ -297,14 +345,26 @@ export default function SettingsPage() {
         </div>
 
         {message ? <div className="empty-state success">{message}</div> : null}
+        {warning ? <div className="empty-state warning">{warning}</div> : null}
         {error ? <div className="empty-state error">{error}</div> : null}
 
         <div className="settings-actions">
-          <button type="button" onClick={handleTest} disabled={loading || testing || saving}>
+          <button type="button" onClick={handleTest} disabled={loading || testing || saving || clearing}>
             {testing ? 'Test in corso…' : 'Testa connessione'}
           </button>
-          <button type="submit" className="primary-button" disabled={loading || testing || saving}>
+          <button type="submit" className="primary-button" disabled={loading || testing || saving || clearing}>
             {saving ? 'Salvataggio…' : 'Salva configurazione'}
+          </button>
+        </div>
+
+        <div className="settings-actions single-action">
+          <button
+            type="button"
+            className="danger-button"
+            onClick={handleClearCredentials}
+            disabled={loading || testing || saving || clearing}
+          >
+            {clearing ? 'Cancellazione…' : 'Cancella credenziali salvate'}
           </button>
         </div>
 

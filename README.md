@@ -1,6 +1,6 @@
 # Proxmox Mobile WebApp
 
-Versione corrente: `0.3.0`
+Versione corrente: `0.3.1`
 
 Applicazione web mobile-first per amministrare VM QEMU e container LXC su Proxmox VE, con backend Node.js che gestisce autenticazione, configurazione persistente del target Proxmox e API operative per dashboard e dettaglio risorsa.
 
@@ -11,6 +11,8 @@ Questa versione porta il progetto molto piu' vicino a un deploy reale:
 - configurazione del server Proxmox interamente dal backend tramite pagina `Impostazioni`
 - persistenza della configurazione su file server-side
 - supporto a test connessione prima del salvataggio
+- avvisi piu' chiari per token API validi ma con privilegi insufficienti
+- possibilita' di cancellare dal backend le credenziali Proxmox salvate
 - protezione opzionale del pannello impostazioni con `APP_ADMIN_TOKEN`
 - validazione piu' robusta della configurazione
 - headers di sicurezza HTTP di base
@@ -47,6 +49,7 @@ In produzione il backend puo' servire direttamente `client/dist`, quindi e' poss
   - token API
   - username/password
 - possibilita' di mantenere secret o password gia' salvati senza reinserirli
+- possibilita' di cancellare dal backend token API, username e password salvati
 - test di connessione verso Proxmox prima del salvataggio definitivo
 - salvataggio della configurazione in `server/data/app-config.json` o nel path definito da `APP_CONFIG_PATH`
 - possibilita' di bloccare le API di configurazione con `APP_ADMIN_TOKEN`
@@ -65,6 +68,7 @@ In produzione il backend puo' servire direttamente `client/dist`, quindi e' poss
 - `GET /api/settings`
 - `POST /api/settings/test`
 - `PUT /api/settings`
+- `DELETE /api/settings/credentials`
 
 Se `APP_ADMIN_TOKEN` e' valorizzato, questi endpoint richiedono l'header `x-admin-token`.
 

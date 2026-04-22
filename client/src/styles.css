@@ -153,6 +153,10 @@ input {
   color: #b9f7d0;
   background: rgba(46, 204, 113, .12);
 }
+.empty-state.warning {
+  color: #ffe3a1;
+  background: rgba(245, 176, 65, .12);
+}
 .details-page {
   display: grid;
   gap: 14px;
@@ -273,8 +277,16 @@ input {
   gap: 10px;
   grid-template-columns: 1fr 1fr;
 }
+.settings-actions.single-action {
+  grid-template-columns: 1fr;
+}
 .primary-button {
   background: var(--accent);
+}
+.danger-button {
+  background: rgba(255, 107, 107, .16);
+  color: #ffc2c2;
+  border: 1px solid rgba(255, 107, 107, .25);
 }
 .setup-card {
   display: grid;

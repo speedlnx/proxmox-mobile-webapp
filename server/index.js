@@ -18,7 +18,7 @@ const APP_ADMIN_TOKEN = process.env.APP_ADMIN_TOKEN || '';
 const APP_CONFIG_PATH = path.resolve(__dirname, process.env.APP_CONFIG_PATH || './data/app-config.json');
 const CLIENT_DIST_DIR = path.resolve(__dirname, '../client/dist');
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.3.1';
 
 const ENV_PROXMOX_DEFAULTS = {
   baseUrl: normalizeBaseUrl(process.env.PROXMOX_BASE_URL || ''),
@@ -328,14 +328,26 @@ async function proxmoxRequest(method, apiPath, options) {
 }
 
 async function testProxmoxConfiguration(config) {
-  const [version, clusterStatus] = await Promise.all([
-    proxmoxRequestWithConfig(config, 'GET', '/version'),
-    proxmoxRequestWithConfig(config, 'GET', '/cluster/status'),
-  ]);
+  const version = await proxmoxRequestWithConfig(config, 'GET', '/version');
+  let clusterStatus = [];
+  let warning = null;
+
+  try {
+    clusterStatus = await proxmoxRequestWithConfig(config, 'GET', '/cluster/status');
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 403) {
+      warning =
+        'Il token API e\' valido, ma non ha accesso a /cluster/status. La configurazione puo\' comunque essere salvata. ' +
+        'Per visualizzare dashboard e dettagli risorse servono permessi Proxmox adeguati, ad esempio VM.Audit e gli ACL corretti.';
+    } else {
+      throw error;
+    }
+  }
 
   return {
     version,
     cluster: Array.isArray(clusterStatus) ? clusterStatus : [],
+    warning,
   };
 }
 
@@ -364,6 +376,21 @@ function normalizeSubmittedConfig(input = {}) {
     username,
     password: passwordInput === undefined || passwordInput === '' ? current.password : passwordInput,
   };
+}
+
+function clearStoredCredentials() {
+  const current = getEffectiveProxmoxConfig();
+  const clearedConfig = {
+    ...current,
+    authMode: '',
+    tokenId: '',
+    tokenSecret: '',
+    username: '',
+    password: '',
+  };
+
+  persistSettings(clearedConfig);
+  return clearedConfig;
 }
 
 function normalizeResource(item) {
@@ -537,6 +564,7 @@ app.post('/api/settings/test', requireAdminToken, async (req, res) => {
       ok: true,
       result,
       settings: buildSettingsSnapshot(config),
+      warning: result.warning || null,
     });
   } catch (error) {
     const { status, payload } = extractClientError(error, 'Connessione a Proxmox non riuscita.');
@@ -548,16 +576,31 @@ app.put('/api/settings', requireAdminToken, async (req, res) => {
   try {
     const config = normalizeSubmittedConfig(req.body);
     validateProxmoxConfig(config);
-    await testProxmoxConfiguration(config);
+    const result = await testProxmoxConfiguration(config);
     persistSettings(config);
 
     res.json({
       ok: true,
       message: 'Configurazione Proxmox salvata correttamente.',
+      warning: result.warning || null,
       ...buildSettingsResponse(),
     });
   } catch (error) {
     const { status, payload } = extractClientError(error, 'Salvataggio configurazione non riuscito.');
+    res.status(status).json(payload);
+  }
+});
+
+app.delete('/api/settings/credentials', requireAdminToken, (_req, res) => {
+  try {
+    clearStoredCredentials();
+    res.json({
+      ok: true,
+      message: 'Credenziali Proxmox salvate rimosse correttamente.',
+      ...buildSettingsResponse(),
+    });
+  } catch (error) {
+    const { status, payload } = extractClientError(error, 'Cancellazione credenziali non riuscita.');
     res.status(status).json(payload);
   }
 });
