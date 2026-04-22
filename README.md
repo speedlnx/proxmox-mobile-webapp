@@ -1,6 +1,6 @@
 # Proxmox Mobile WebApp
 
-Versione corrente: `0.5.1`
+Versione corrente: `0.6.0`
 
 Proxmox Mobile WebApp e' una webapp amministrativa mobile-first per Proxmox VE. Permette di accedere in modo sicuro a VM QEMU, container LXC e storage del cluster tramite un backend Node.js che centralizza autenticazione Proxmox, configurazione persistente, controllo accessi applicativo e API operative pensate per uso da smartphone, tablet o browser desktop.
 
@@ -11,9 +11,11 @@ Il software non e' solo una dashboard di lettura: oggi e' una piccola console op
 - autenticazione locale all'app con utenti, ruoli e sessioni protette
 - configurazione del server Proxmox interamente dal backend
 - consultazione di VM, container e storage
+- riepilogo dello stato del cluster e dei nodi hypervisor
 - azioni rapide su guest
 - accesso alla console web nativa di Proxmox
 - gestione centralizzata delle credenziali Proxmox senza esporle al browser
+- installazione come web app su smartphone e desktop compatibili
 
 L'architettura e' pensata per essere pubblicata come servizio singolo dietro reverse proxy, mantenendo il frontend React e il backend Express nello stesso progetto.
 
@@ -32,6 +34,8 @@ L'architettura e' pensata per essere pubblicata come servizio singolo dietro rev
 - azioni aggiuntive `reset` e `unlock`
 - nuova sezione per lo stato degli storage
 - aggiornamento dati in background senza spostamenti del layout durante il polling
+- supporto installazione come web app/PWA con manifest, icone e service worker
+- riepilogo cluster/hypervisor con CPU, core, thread, RAM, swap, disco e load
 
 ## Architettura
 
@@ -81,6 +85,17 @@ In produzione il backend puo' servire direttamente `client/dist`, quindi e' poss
   - `unlock` dove consentito dall'API Proxmox e dai permessi disponibili
 - apertura della console web nativa di Proxmox in una nuova scheda
 
+### Overview Cluster
+
+- riepilogo aggregato di cluster e hypervisor
+- CPU logiche totali
+- socket, core e thread
+- RAM totale e disponibile
+- swap totale e disponibile
+- disco totale e disponibile
+- load average per nodo
+- dettaglio sintetico per singolo nodo
+
 ### Storage
 
 - vista dedicata degli storage del cluster
@@ -88,6 +103,13 @@ In produzione il backend puo' servire direttamente `client/dist`, quindi e' poss
 - utilizzo percentuale
 - spazio usato, libero e totale
 - tipo plugin e indicazione shared/non shared
+
+### Web App
+
+- manifest web app
+- service worker per asset statici e app shell
+- icone installabili
+- supporto installazione in modalita' standalone su browser compatibili
 
 ### Configurazione backend
 

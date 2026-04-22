@@ -20,7 +20,7 @@ const APP_CONFIG_PATH = path.resolve(__dirname, process.env.APP_CONFIG_PATH || '
 const APP_USERS_PATH = path.resolve(__dirname, process.env.APP_USERS_PATH || './data/users.json');
 const CLIENT_DIST_DIR = path.resolve(__dirname, '../client/dist');
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
-const APP_VERSION = '0.5.1';
+const APP_VERSION = '0.6.0';
 const SESSION_COOKIE_NAME = 'pmw_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
 const SESSION_SECURE = APP_BASE_URL.startsWith('https://');
@@ -657,6 +657,118 @@ function normalizeStorage(item) {
   };
 }
 
+function pickNumber(...values) {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function normalizeLoadAverage(loadavg) {
+  if (Array.isArray(loadavg)) {
+    return loadavg.slice(0, 3).map((value) => Number(value) || 0);
+  }
+  if (typeof loadavg === 'string') {
+    return loadavg.split(/[,\s]+/).filter(Boolean).slice(0, 3).map((value) => Number(value) || 0);
+  }
+  return [];
+}
+
+async function buildClusterOverview() {
+  const nodeResources = await proxmoxRequest('GET', '/cluster/resources', { params: { type: 'node' } });
+  const activeNodes = nodeResources.filter((item) => item.type === 'node');
+
+  const detailedNodes = await Promise.all(
+    activeNodes.map(async (nodeResource) => {
+      let status = {};
+      try {
+        status = await proxmoxRequest('GET', `/nodes/${nodeResource.node}/status/current`);
+      } catch (_error) {
+        status = {};
+      }
+
+      const cpuInfo = status.cpuinfo || {};
+      const cpus = pickNumber(cpuInfo.cpus, nodeResource.maxcpu);
+      const sockets = pickNumber(cpuInfo.sockets, status.sockets);
+      const coresPerSocket = pickNumber(cpuInfo.cores, status.cores);
+      const threadsPerCore = pickNumber(cpuInfo.threads, status.threads);
+      const memoryTotal = pickNumber(status.memory?.total, nodeResource.maxmem, status.maxmem);
+      const memoryUsed = pickNumber(status.memory?.used, nodeResource.mem, status.mem);
+      const memoryFree = memoryTotal != null && memoryUsed != null ? Math.max(0, memoryTotal - memoryUsed) : null;
+      const swapTotal = pickNumber(status.swap?.total);
+      const swapUsed = pickNumber(status.swap?.used);
+      const swapFree = swapTotal != null && swapUsed != null ? Math.max(0, swapTotal - swapUsed) : null;
+      const diskTotal = pickNumber(status.rootfs?.total, nodeResource.maxdisk, status.maxdisk);
+      const diskUsed = pickNumber(status.rootfs?.used, nodeResource.disk, status.disk);
+      const diskFree = diskTotal != null && diskUsed != null ? Math.max(0, diskTotal - diskUsed) : null;
+      const loadavg = normalizeLoadAverage(status.loadavg);
+
+      return {
+        node: nodeResource.node,
+        status: nodeResource.status || status.status || 'unknown',
+        cpuUsage: pickNumber(nodeResource.cpu, status.cpu),
+        cpus: cpus ?? 0,
+        sockets: sockets ?? 0,
+        coresPerSocket: coresPerSocket ?? 0,
+        threadsPerCore: threadsPerCore ?? 0,
+        memoryTotal,
+        memoryUsed,
+        memoryFree,
+        swapTotal,
+        swapUsed,
+        swapFree,
+        diskTotal,
+        diskUsed,
+        diskFree,
+        loadavg,
+      };
+    })
+  );
+
+  const summary = detailedNodes.reduce((accumulator, node) => {
+    accumulator.nodes += 1;
+    accumulator.cpus += node.cpus || 0;
+    accumulator.sockets += node.sockets || 0;
+    accumulator.cores += (node.sockets || 0) * (node.coresPerSocket || 0);
+    accumulator.threads +=
+      node.sockets && node.coresPerSocket && node.threadsPerCore
+        ? node.sockets * node.coresPerSocket * node.threadsPerCore
+        : node.cpus || 0;
+    accumulator.memoryTotal += node.memoryTotal || 0;
+    accumulator.memoryUsed += node.memoryUsed || 0;
+    accumulator.memoryFree += node.memoryFree || 0;
+    accumulator.swapTotal += node.swapTotal || 0;
+    accumulator.swapUsed += node.swapUsed || 0;
+    accumulator.swapFree += node.swapFree || 0;
+    accumulator.diskTotal += node.diskTotal || 0;
+    accumulator.diskUsed += node.diskUsed || 0;
+    accumulator.diskFree += node.diskFree || 0;
+    if (node.status === 'online') accumulator.online += 1;
+    return accumulator;
+  }, {
+    nodes: 0,
+    online: 0,
+    cpus: 0,
+    sockets: 0,
+    cores: 0,
+    threads: 0,
+    memoryTotal: 0,
+    memoryUsed: 0,
+    memoryFree: 0,
+    swapTotal: 0,
+    swapUsed: 0,
+    swapFree: 0,
+    diskTotal: 0,
+    diskUsed: 0,
+    diskFree: 0,
+  });
+
+  return {
+    summary,
+    nodes: detailedNodes.sort((a, b) => a.node.localeCompare(b.node)),
+  };
+}
+
 function normalizeLockValue(value) {
   if (!value) return null;
   return String(value).trim() || null;
@@ -1130,6 +1242,16 @@ app.get('/api/storages', requireAuthenticatedUser, async (_req, res) => {
     res.json({ items });
   } catch (error) {
     const { status, payload } = extractClientError(error, 'Errore nel caricamento degli storage.');
+    res.status(status).json(payload);
+  }
+});
+
+app.get('/api/overview', requireAuthenticatedUser, async (_req, res) => {
+  try {
+    const overview = await buildClusterOverview();
+    res.json(overview);
+  } catch (error) {
+    const { status, payload } = extractClientError(error, 'Errore nel caricamento del riepilogo cluster.');
     res.status(status).json(payload);
   }
 });

@@ -2,8 +2,26 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ResourceCard from '../components/ResourceCard';
 
+function formatBytes(value) {
+  if (value == null) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let n = value;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i += 1;
+  }
+  return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function formatLoad(loadavg) {
+  if (!loadavg?.length) return '—';
+  return loadavg.map((value) => Number(value).toFixed(2)).join(' / ');
+}
+
 export default function DashboardPage() {
   const [items, setItems] = useState([]);
+  const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -23,14 +41,26 @@ export default function DashboardPage() {
     }
 
     try {
-      const response = await fetch('/api/resources');
-      const data = await response.json();
-      if (!response.ok) {
-        setSetupRequired(data.code === 'SETUP_REQUIRED');
-        throw new Error(data.error || 'Errore nel caricamento');
+      const resourcesResponse = await fetch('/api/resources');
+      const resourcesData = await resourcesResponse.json();
+
+      if (!resourcesResponse.ok) {
+        setSetupRequired(resourcesData.code === 'SETUP_REQUIRED');
+        throw new Error(resourcesData.error || 'Errore nel caricamento');
       }
+
+      const overviewResult = await fetch('/api/overview')
+        .then(async (response) => ({
+          ok: response.ok,
+          data: await response.json(),
+        }))
+        .catch(() => null);
+
       setSetupRequired(false);
-      setItems(data.items);
+      setItems(resourcesData.items);
+      if (overviewResult && overviewResult.ok) {
+        setOverview(overviewResult.data);
+      }
       hasDataRef.current = true;
       setError('');
     } catch (err) {
@@ -84,6 +114,57 @@ export default function DashboardPage() {
 
   return (
     <section>
+      {overview ? (
+        <div className="details-card overview-card">
+          <div className="resource-card__top">
+            <div>
+              <div className="resource-type">Cluster overview</div>
+              <h2>Riepilogo Hypervisor</h2>
+              <div className="resource-meta">
+                Nodi online {overview.summary.online}/{overview.summary.nodes}
+              </div>
+            </div>
+          </div>
+
+          <div className="details-grid overview-grid">
+            <div><span>CPU logiche</span><strong>{overview.summary.cpus || '—'}</strong></div>
+            <div><span>Socket</span><strong>{overview.summary.sockets || '—'}</strong></div>
+            <div><span>Core totali</span><strong>{overview.summary.cores || '—'}</strong></div>
+            <div><span>Thread totali</span><strong>{overview.summary.threads || '—'}</strong></div>
+            <div><span>RAM totale</span><strong>{formatBytes(overview.summary.memoryTotal)}</strong></div>
+            <div><span>RAM disponibile</span><strong>{formatBytes(overview.summary.memoryFree)}</strong></div>
+            <div><span>Swap totale</span><strong>{formatBytes(overview.summary.swapTotal)}</strong></div>
+            <div><span>Swap libera</span><strong>{formatBytes(overview.summary.swapFree)}</strong></div>
+            <div><span>Disco totale</span><strong>{formatBytes(overview.summary.diskTotal)}</strong></div>
+            <div><span>Disco libero</span><strong>{formatBytes(overview.summary.diskFree)}</strong></div>
+          </div>
+
+          <div className="overview-node-list">
+            {overview.nodes.map((node) => (
+              <div className="overview-node-card" key={node.node}>
+                <div className="resource-card__top">
+                  <div>
+                    <strong>{node.node}</strong>
+                    <div className="resource-meta">
+                      CPU {node.cpus || '—'} · Core {(node.sockets || 0) * (node.coresPerSocket || 0) || '—'} · Thread {node.threadsPerCore || '—'}x/core
+                    </div>
+                  </div>
+                  <span className={`status-badge ${node.status === 'online' ? 'status-running' : 'status-stopped'}`}>
+                    {node.status}
+                  </span>
+                </div>
+                <div className="overview-node-stats">
+                  <span>Load: {formatLoad(node.loadavg)}</span>
+                  <span>RAM: {formatBytes(node.memoryUsed)} / {formatBytes(node.memoryTotal)}</span>
+                  <span>Swap: {formatBytes(node.swapUsed)} / {formatBytes(node.swapTotal)}</span>
+                  <span>Disco: {formatBytes(node.diskUsed)} / {formatBytes(node.diskTotal)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className="toolbar">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cerca nome, nodo o VMID" />
         <div className={`toolbar-status ${refreshing ? 'is-visible' : ''}`}>
