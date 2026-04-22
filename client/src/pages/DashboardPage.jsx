@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ResourceCard from '../components/ResourceCard';
 
@@ -11,10 +11,17 @@ export default function DashboardPage() {
   const [pendingKey, setPendingKey] = useState('');
   const [error, setError] = useState('');
   const [setupRequired, setSetupRequired] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const hasDataRef = useRef(false);
 
-  async function load() {
-    setLoading(true);
-    setError('');
+  async function load({ silent = false } = {}) {
+    if (silent) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+      setError('');
+    }
+
     try {
       const response = await fetch('/api/resources');
       const data = await response.json();
@@ -24,16 +31,26 @@ export default function DashboardPage() {
       }
       setSetupRequired(false);
       setItems(data.items);
+      hasDataRef.current = true;
+      setError('');
     } catch (err) {
-      setError(err.message);
+      if (!silent || !hasDataRef.current) {
+        setError(err.message);
+      }
     } finally {
-      setLoading(false);
+      if (silent) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
   }
 
   useEffect(() => {
     load();
-    const id = setInterval(load, 15000);
+    const id = setInterval(() => {
+      load({ silent: true });
+    }, 15000);
     return () => clearInterval(id);
   }, []);
 
@@ -69,6 +86,9 @@ export default function DashboardPage() {
     <section>
       <div className="toolbar">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cerca nome, nodo o VMID" />
+        <div className={`toolbar-status ${refreshing ? 'is-visible' : ''}`}>
+          Aggiornamento in background…
+        </div>
         <div className="segmented">
           <button className={typeFilter === 'all' ? 'active' : ''} onClick={() => setTypeFilter('all')}>Tutti</button>
           <button className={typeFilter === 'qemu' ? 'active' : ''} onClick={() => setTypeFilter('qemu')}>VM</button>

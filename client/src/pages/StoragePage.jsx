@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 function formatBytes(value) {
   if (value == null) return '—';
@@ -21,28 +21,50 @@ export default function StoragePage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const hasDataRef = useRef(false);
 
   useEffect(() => {
-    async function load() {
-      setLoading(true);
-      setError('');
+    async function load({ silent = false } = {}) {
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+        setError('');
+      }
+
       try {
         const response = await fetch('/api/storages');
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || 'Errore nel caricamento degli storage');
         setItems(payload.items);
+        hasDataRef.current = true;
+        setError('');
       } catch (err) {
-        setError(err.message);
+        if (!silent || !hasDataRef.current) {
+          setError(err.message);
+        }
       } finally {
-        setLoading(false);
+        if (silent) {
+          setRefreshing(false);
+        } else {
+          setLoading(false);
+        }
       }
     }
 
     load();
+    const id = setInterval(() => {
+      load({ silent: true });
+    }, 20000);
+    return () => clearInterval(id);
   }, []);
 
   return (
     <section className="details-page">
+      <div className={`toolbar-status ${refreshing ? 'is-visible' : ''}`}>
+        Aggiornamento in background…
+      </div>
       {loading ? <div className="empty-state">Caricamento storage…</div> : null}
       {error ? <div className="empty-state error">{error}</div> : null}
       {!loading && !error && items.length === 0 ? <div className="empty-state">Nessuno storage trovato</div> : null}

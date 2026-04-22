@@ -100,6 +100,18 @@ select {
   gap: 12px;
   margin-bottom: 18px;
 }
+.toolbar-status {
+  color: var(--muted);
+  font-size: .9rem;
+  min-height: 1.2rem;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.toolbar-status.is-visible {
+  visibility: visible;
+  opacity: 1;
+}
 .segmented {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

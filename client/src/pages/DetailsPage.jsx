@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
 
@@ -27,23 +27,43 @@ export default function DetailsPage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const hasDataRef = useRef(false);
 
   useEffect(() => {
-    async function load() {
-      setLoading(true);
-      setError('');
+    async function load({ silent = false } = {}) {
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+        setError('');
+      }
+
       try {
         const response = await fetch(`/api/resources/${type}/${node}/${vmid}`);
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || 'Errore nel caricamento');
         setData(payload);
+        hasDataRef.current = true;
+        setError('');
       } catch (err) {
-        setError(err.message);
+        if (!silent || !hasDataRef.current) {
+          setError(err.message);
+        }
       } finally {
-        setLoading(false);
+        if (silent) {
+          setRefreshing(false);
+        } else {
+          setLoading(false);
+        }
       }
     }
+
     load();
+    const id = setInterval(() => {
+      load({ silent: true });
+    }, 15000);
+    return () => clearInterval(id);
   }, [type, node, vmid]);
 
   if (loading) return <div className="empty-state">Caricamento dettagli…</div>;
@@ -55,6 +75,9 @@ export default function DetailsPage() {
   return (
     <section className="details-page">
       <Link to="/" className="back-link">← Torna alla dashboard</Link>
+      <div className={`toolbar-status ${refreshing ? 'is-visible' : ''}`}>
+        Aggiornamento in background…
+      </div>
 
       <div className="details-card">
         <div className="resource-card__top">
