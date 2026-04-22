@@ -701,7 +701,7 @@ if (fs.existsSync(CLIENT_DIST_DIR)) {
   });
 }
 
-app.listen(APP_PORT, () => {
+app.listen(APP_PORT, '0.0.0.0', () => {
   console.log(`Proxmox Mobile WebApp ${APP_VERSION} in ascolto su ${APP_BASE_URL}`);
   console.log(`Configurazione runtime: ${APP_CONFIG_PATH}`);
 });
