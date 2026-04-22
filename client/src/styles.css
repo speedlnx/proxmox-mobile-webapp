@@ -73,6 +73,9 @@ input {
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
+.segmented-quad {
+  grid-template-columns: repeat(4, 1fr);
+}
 .segmented .active { background: var(--accent); }
 .card-grid {
   display: grid;
@@ -104,6 +107,12 @@ input {
 .status-running { background: rgba(46, 204, 113, .15); color: #8ff0b2; }
 .status-stopped { background: rgba(255, 107, 107, .14); color: #ff9d9d; }
 .status-paused { background: rgba(245, 176, 65, .15); color: #ffd18a; }
+.status-locked { background: rgba(255, 107, 107, .2); color: #ffc2c2; }
+.resource-lock {
+  margin-top: 6px;
+  color: #ffc2c2;
+  font-size: .9rem;
+}
 .meters {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -132,7 +141,7 @@ input {
   margin-bottom: 14px;
 }
 .actions-row {
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
 }
 .details-link, .console-link {
   display: inline-flex;
@@ -194,6 +203,14 @@ input {
   white-space: pre-wrap;
   word-break: break-word;
   color: #c7d4eb;
+}
+.notes-box {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #d7e3f7;
+  font-family: inherit;
+  line-height: 1.5;
 }
 .settings-page {
   display: grid;

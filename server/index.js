@@ -284,6 +284,18 @@ async function proxmoxRequestWithConfig(config, method, apiPath, { params, data,
   validateProxmoxConfig(config);
 
   const requestHeaders = { ...headers };
+  let requestData = data;
+
+  if (data && ['POST', 'PUT'].includes(method) && !(data instanceof URLSearchParams) && typeof data === 'object') {
+    const form = new URLSearchParams();
+    Object.entries(data).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      form.append(key, String(value));
+    });
+    requestData = form.toString();
+    requestHeaders['Content-Type'] = 'application/x-www-form-urlencoded';
+  }
+
   if (config.authMode === 'api-token') {
     requestHeaders.Authorization = `PVEAPIToken=${config.tokenId}=${config.tokenSecret}`;
   } else {
@@ -299,7 +311,7 @@ async function proxmoxRequestWithConfig(config, method, apiPath, { params, data,
       method,
       url: `${config.baseUrl}/api2/json${apiPath}`,
       params,
-      data,
+      data: requestData,
       headers: requestHeaders,
       httpsAgent: createHttpsAgent(config),
       timeout: 20_000,
@@ -410,7 +422,47 @@ function normalizeResource(item) {
     uptime: item.uptime ?? null,
     tags: item.tags || '',
     template: item.template || 0,
+    lock: item.lock || null,
+    notes: item.description || item.notes || '',
   };
+}
+
+function normalizeStorage(item) {
+  return {
+    id: item.id,
+    storage: item.storage || item.id || '',
+    node: item.node || '',
+    status: item.status || 'unknown',
+    type: item.type || '',
+    plugintype: item.plugintype || '',
+    shared: Boolean(item.shared),
+    total: item.maxdisk ?? item.total ?? null,
+    used: item.disk ?? item.used ?? null,
+    avail: item.avail ?? null,
+    content: item.content || '',
+  };
+}
+
+function normalizeLockValue(value) {
+  if (!value) return null;
+  return String(value).trim() || null;
+}
+
+async function enrichResourceList(items) {
+  return Promise.all(
+    items.map(async (item) => {
+      try {
+        const config = await proxmoxRequest('GET', `/nodes/${item.node}/${item.type}/${item.vmid}/config`);
+        return {
+          ...item,
+          lock: normalizeLockValue(config.lock),
+          notes: config.description || config.notes || '',
+        };
+      } catch (_error) {
+        return item;
+      }
+    })
+  );
 }
 
 function parseLxcNetworkConfig(config) {
@@ -608,14 +660,30 @@ app.delete('/api/settings/credentials', requireAdminToken, (_req, res) => {
 app.get('/api/resources', async (_req, res) => {
   try {
     const data = await proxmoxRequest('GET', '/cluster/resources', { params: { type: 'vm' } });
-    const items = data
+    const items = await enrichResourceList(
+      data
       .filter((item) => ['qemu', 'lxc'].includes(item.type) && !item.template)
       .map(normalizeResource)
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => a.name.localeCompare(b.name))
+    );
 
     res.json({ items });
   } catch (error) {
     const { status, payload } = extractClientError(error, 'Errore nel caricamento delle risorse.');
+    res.status(status).json(payload);
+  }
+});
+
+app.get('/api/storages', async (_req, res) => {
+  try {
+    const data = await proxmoxRequest('GET', '/cluster/resources', { params: { type: 'storage' } });
+    const items = data
+      .map(normalizeStorage)
+      .sort((a, b) => `${a.node}-${a.storage}`.localeCompare(`${b.node}-${b.storage}`));
+
+    res.json({ items });
+  } catch (error) {
+    const { status, payload } = extractClientError(error, 'Errore nel caricamento degli storage.');
     res.status(status).json(payload);
   }
 });
@@ -661,6 +729,8 @@ app.get('/api/resources/:type/:node/:vmid', async (req, res) => {
         uptime: status.uptime ?? null,
         ostype: config.ostype || null,
         description: config.description || '',
+        notes: config.description || config.notes || '',
+        lock: normalizeLockValue(config.lock),
         consoleUrl: safeConsoleUrl({ type, node, vmid }),
       },
       network: {
@@ -676,7 +746,7 @@ app.get('/api/resources/:type/:node/:vmid', async (req, res) => {
 
 app.post('/api/resources/:type/:node/:vmid/:action', async (req, res) => {
   const { type, node, vmid, action } = req.params;
-  const allowedActions = new Set(['start', 'shutdown', 'reboot', 'stop']);
+  const allowedActions = new Set(['start', 'shutdown', 'reboot', 'stop', 'reset', 'unlock']);
   if (!['qemu', 'lxc'].includes(type)) {
     return res.status(400).json({ error: 'Tipo non valido', code: 'INVALID_RESOURCE_TYPE' });
   }
@@ -685,9 +755,34 @@ app.post('/api/resources/:type/:node/:vmid/:action', async (req, res) => {
   }
 
   try {
-    const result = await proxmoxRequest('POST', `/nodes/${node}/${type}/${vmid}/status/${action}`);
+    let result;
+    if (action === 'reset') {
+      const proxmoxAction = type === 'qemu' ? 'reset' : 'reboot';
+      result = await proxmoxRequest('POST', `/nodes/${node}/${type}/${vmid}/status/${proxmoxAction}`);
+    } else if (action === 'unlock') {
+      const payload = type === 'qemu'
+        ? { delete: 'lock', skiplock: 1 }
+        : { delete: 'lock' };
+
+      result = await proxmoxRequest('PUT', `/nodes/${node}/${type}/${vmid}/config`, { data: payload });
+    } else {
+      result = await proxmoxRequest('POST', `/nodes/${node}/${type}/${vmid}/status/${action}`);
+    }
+
     res.json({ ok: true, upid: result });
   } catch (error) {
+    if (action === 'unlock' && axios.isAxiosError(error)) {
+      const message = error.response?.data?.errors?.skiplock
+        ? 'L\'unlock forzato richiede in genere una sessione root@pam con login username/password, non un API token.'
+        : error.response?.data?.message || error.response?.data?.error;
+
+      return res.status(error.response?.status || 400).json({
+        error: message || 'Unlock non riuscito.',
+        code: 'UNLOCK_FAILED',
+        details: error.response?.data || null,
+      });
+    }
+
     const { status, payload } = extractClientError(error, 'Operazione non riuscita.');
     res.status(status).json(payload);
   }

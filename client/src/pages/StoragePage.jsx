@@ -1,0 +1,78 @@
+import { useEffect, useState } from 'react';
+
+function formatBytes(value) {
+  if (value == null) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let n = value;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i += 1;
+  }
+  return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function percent(used, total) {
+  if (!total || used == null) return null;
+  return Math.min(100, Math.round((used / total) * 100));
+}
+
+export default function StoragePage() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      setError('');
+      try {
+        const response = await fetch('/api/storages');
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Errore nel caricamento degli storage');
+        setItems(payload.items);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    load();
+  }, []);
+
+  return (
+    <section className="details-page">
+      {loading ? <div className="empty-state">Caricamento storage…</div> : null}
+      {error ? <div className="empty-state error">{error}</div> : null}
+      {!loading && !error && items.length === 0 ? <div className="empty-state">Nessuno storage trovato</div> : null}
+
+      {items.map((item) => {
+        const usage = percent(item.used, item.total);
+        return (
+          <article className="details-card" key={`${item.node}-${item.storage}`}>
+            <div className="resource-card__top">
+              <div>
+                <div className="resource-type">{item.node || 'cluster'} · {item.plugintype || item.type}</div>
+                <h2>{item.storage}</h2>
+                <div className="resource-meta">{item.content || 'Contenuti non specificati'}</div>
+              </div>
+              <span className={`status-badge ${item.status === 'available' ? 'status-running' : 'status-paused'}`}>
+                {item.status}
+              </span>
+            </div>
+
+            <div className="details-grid">
+              <div><span>Utilizzo</span><strong>{usage == null ? '—' : `${usage}%`}</strong></div>
+              <div><span>Shared</span><strong>{item.shared ? 'Si' : 'No'}</strong></div>
+              <div><span>Usato</span><strong>{formatBytes(item.used)}</strong></div>
+              <div><span>Libero</span><strong>{formatBytes(item.avail)}</strong></div>
+              <div><span>Totale</span><strong>{formatBytes(item.total)}</strong></div>
+              <div><span>Tipo</span><strong>{item.plugintype || item.type || '—'}</strong></div>
+            </div>
+          </article>
+        );
+      })}
+    </section>
+  );
+}

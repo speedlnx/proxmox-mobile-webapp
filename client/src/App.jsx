@@ -2,6 +2,7 @@ import { Routes, Route, NavLink } from 'react-router-dom';
 import DashboardPage from './pages/DashboardPage';
 import DetailsPage from './pages/DetailsPage';
 import SettingsPage from './pages/SettingsPage';
+import StoragePage from './pages/StoragePage';
 
 export default function App() {
   return (
@@ -18,11 +19,15 @@ export default function App() {
           <NavLink to="/settings" className="header-link">
             Impostazioni
           </NavLink>
+          <NavLink to="/storage" className="header-link">
+            Storage
+          </NavLink>
         </div>
       </header>
       <main className="app-main">
         <Routes>
           <Route path="/" element={<DashboardPage />} />
+          <Route path="/storage" element={<StoragePage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/resource/:type/:node/:vmid" element={<DetailsPage />} />
         </Routes>

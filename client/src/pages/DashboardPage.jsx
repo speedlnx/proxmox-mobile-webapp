@@ -5,7 +5,8 @@ import ResourceCard from '../components/ResourceCard';
 export default function DashboardPage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [pendingKey, setPendingKey] = useState('');
   const [error, setError] = useState('');
@@ -55,21 +56,29 @@ export default function DashboardPage() {
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
-      const matchesFilter = filter === 'all' || item.type === filter;
+      const matchesType = typeFilter === 'all' || item.type === typeFilter;
+      const normalizedStatus = item.lock ? 'locked' : item.status;
+      const matchesStatus = statusFilter === 'all' || normalizedStatus === statusFilter;
       const q = search.trim().toLowerCase();
       const matchesSearch = !q || item.name.toLowerCase().includes(q) || String(item.vmid).includes(q) || item.node.toLowerCase().includes(q);
-      return matchesFilter && matchesSearch;
+      return matchesType && matchesStatus && matchesSearch;
     });
-  }, [items, filter, search]);
+  }, [items, typeFilter, statusFilter, search]);
 
   return (
     <section>
       <div className="toolbar">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cerca nome, nodo o VMID" />
         <div className="segmented">
-          <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Tutti</button>
-          <button className={filter === 'qemu' ? 'active' : ''} onClick={() => setFilter('qemu')}>VM</button>
-          <button className={filter === 'lxc' ? 'active' : ''} onClick={() => setFilter('lxc')}>LXC</button>
+          <button className={typeFilter === 'all' ? 'active' : ''} onClick={() => setTypeFilter('all')}>Tutti</button>
+          <button className={typeFilter === 'qemu' ? 'active' : ''} onClick={() => setTypeFilter('qemu')}>VM</button>
+          <button className={typeFilter === 'lxc' ? 'active' : ''} onClick={() => setTypeFilter('lxc')}>LXC</button>
+        </div>
+        <div className="segmented segmented-quad">
+          <button className={statusFilter === 'all' ? 'active' : ''} onClick={() => setStatusFilter('all')}>Tutti</button>
+          <button className={statusFilter === 'running' ? 'active' : ''} onClick={() => setStatusFilter('running')}>Accesi</button>
+          <button className={statusFilter === 'stopped' ? 'active' : ''} onClick={() => setStatusFilter('stopped')}>Spenti</button>
+          <button className={statusFilter === 'locked' ? 'active' : ''} onClick={() => setStatusFilter('locked')}>Locked</button>
         </div>
       </div>
 

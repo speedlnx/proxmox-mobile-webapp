@@ -62,8 +62,9 @@ export default function DetailsPage() {
             <div className="resource-type">{info.type.toUpperCase()} · {info.node}</div>
             <h2>{info.name}</h2>
             <div className="resource-meta">VMID {info.vmid}</div>
+            {info.lock ? <div className="resource-lock">Locked: {info.lock}</div> : null}
           </div>
-          <StatusBadge status={info.status} />
+          <StatusBadge status={info.status} lock={info.lock} />
         </div>
 
         <div className="details-grid">
@@ -82,6 +83,15 @@ export default function DetailsPage() {
           </p>
           <a href={info.consoleUrl} target="_blank" rel="noreferrer" className="console-link">Apri console</a>
         </div>
+      </div>
+
+      <div className="details-card">
+        <h3>Note</h3>
+        {info.notes ? (
+          <pre className="notes-box">{info.notes}</pre>
+        ) : (
+          <div className="empty-state">Nessuna nota configurata</div>
+        )}
       </div>
 
       <div className="details-card">

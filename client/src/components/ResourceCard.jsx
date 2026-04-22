@@ -22,6 +22,9 @@ export default function ResourceCard({ item, onAction, pendingAction }) {
   const cpu = item.cpu == null ? null : Math.round(item.cpu * 100);
   const ram = percent(item.mem, item.maxmem);
   const disk = percent(item.disk, item.maxdisk);
+  const isLocked = Boolean(item.lock);
+  const actionLabel = item.status === 'running' ? 'shutdown' : 'start';
+  const primaryLabel = item.status === 'running' ? 'Spegni' : 'Avvia';
 
   return (
     <article className="resource-card">
@@ -30,8 +33,9 @@ export default function ResourceCard({ item, onAction, pendingAction }) {
           <div className="resource-type">{item.type.toUpperCase()} · {item.node}</div>
           <h2>{item.name}</h2>
           <div className="resource-meta">VMID {item.vmid}</div>
+          {isLocked ? <div className="resource-lock">Locked: {item.lock}</div> : null}
         </div>
-        <StatusBadge status={item.status} />
+        <StatusBadge status={item.status} lock={item.lock} />
       </div>
 
       <div className="meters">
@@ -46,12 +50,20 @@ export default function ResourceCard({ item, onAction, pendingAction }) {
       </div>
 
       <div className="actions-row">
-        <button disabled={pendingAction} onClick={() => onAction(item, item.status === 'running' ? 'shutdown' : 'start')}>
-          {item.status === 'running' ? 'Spegni' : 'Avvia'}
+        <button disabled={pendingAction} onClick={() => onAction(item, actionLabel)}>
+          {primaryLabel}
         </button>
         <button disabled={pendingAction} onClick={() => onAction(item, 'reboot')}>
           Riavvia
         </button>
+        <button disabled={pendingAction} onClick={() => onAction(item, 'reset')}>
+          Reset
+        </button>
+        {isLocked ? (
+          <button disabled={pendingAction} className="danger-button" onClick={() => onAction(item, 'unlock')}>
+            Unlock
+          </button>
+        ) : null}
         <Link className="details-link" to={`/resource/${item.type}/${item.node}/${item.vmid}`}>
           Dettagli
         </Link>
