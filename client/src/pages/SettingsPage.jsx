@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react';
 
-const ADMIN_TOKEN_STORAGE_KEY = 'proxmox-mobile-admin-token';
-
 const defaultForm = {
   baseUrl: '',
   allowInsecureTls: false,
@@ -12,30 +10,6 @@ const defaultForm = {
   username: '',
   password: '',
 };
-
-function getStoredAdminToken() {
-  try {
-    return window.sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || '';
-  } catch (_error) {
-    return '';
-  }
-}
-
-function storeAdminToken(value) {
-  try {
-    if (!value) {
-      window.sessionStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
-      return;
-    }
-    window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, value);
-  } catch (_error) {
-    // Ignore sessionStorage access failures.
-  }
-}
-
-function buildHeaders(adminToken) {
-  return adminToken ? { 'x-admin-token': adminToken } : {};
-}
 
 function applySettingsToForm(settings) {
   return {
@@ -54,7 +28,6 @@ export default function SettingsPage() {
   const [health, setHealth] = useState(null);
   const [form, setForm] = useState(defaultForm);
   const [settingsInfo, setSettingsInfo] = useState(null);
-  const [adminToken, setAdminToken] = useState(getStoredAdminToken);
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -64,16 +37,9 @@ export default function SettingsPage() {
   const [warning, setWarning] = useState('');
 
   useEffect(() => {
-    storeAdminToken(adminToken);
-  }, [adminToken]);
-
-  useEffect(() => {
     loadHealth();
-  }, []);
-
-  useEffect(() => {
     loadSettings();
-  }, [adminToken]);
+  }, []);
 
   async function loadHealth() {
     try {
@@ -81,8 +47,8 @@ export default function SettingsPage() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'Errore nel caricamento dello stato applicazione');
       setHealth(payload);
-    } catch (err) {
-      setError(err.message);
+    } catch (loadError) {
+      setError(loadError.message);
     }
   }
 
@@ -91,23 +57,15 @@ export default function SettingsPage() {
     setError('');
 
     try {
-      const response = await fetch('/api/settings', {
-        headers: buildHeaders(adminToken),
-      });
+      const response = await fetch('/api/settings');
       const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload.error || 'Impossibile leggere la configurazione');
-      }
+      if (!response.ok) throw new Error(payload.error || 'Impossibile leggere la configurazione');
 
       setSettingsInfo(payload);
       setForm(applySettingsToForm(payload.settings));
-    } catch (err) {
+    } catch (loadError) {
       setSettingsInfo(null);
-      if (!health?.adminProtected && !adminToken) {
-        setForm(defaultForm);
-      }
-      setError(err.message);
+      setError(loadError.message);
     } finally {
       setLoading(false);
     }
@@ -126,39 +84,29 @@ export default function SettingsPage() {
     try {
       const response = await fetch(endpoint, {
         method,
-        headers: {
-          'Content-Type': 'application/json',
-          ...buildHeaders(adminToken),
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'Operazione non riuscita');
 
       if (payload.settings) {
-        setSettingsInfo((current) => ({
-          ...(current || {}),
-          settings: payload.settings,
-        }));
+        setSettingsInfo((current) => ({ ...(current || {}), settings: payload.settings }));
+        setForm(applySettingsToForm(payload.settings));
       }
 
       if (payload.result?.version || payload.message) {
         const version = payload.result?.version?.release ? ` (${payload.result.version.release})` : '';
         setMessage(payload.message || `Connessione Proxmox verificata con successo${version}.`);
       }
-
       if (payload.warning) {
         setWarning(payload.warning);
       }
 
-      if (payload.settings) {
-        setForm(applySettingsToForm(payload.settings));
-      }
-
       await loadHealth();
       return payload;
-    } catch (err) {
-      setError(err.message);
+    } catch (submitError) {
+      setError(submitError.message);
       return null;
     } finally {
       workingSetter(false);
@@ -184,34 +132,17 @@ export default function SettingsPage() {
     setWarning('');
     setError('');
     setClearing(true);
-
     try {
-      const response = await fetch('/api/settings/credentials', {
-        method: 'DELETE',
-        headers: buildHeaders(adminToken),
-      });
+      const response = await fetch('/api/settings/credentials', { method: 'DELETE' });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'Cancellazione credenziali non riuscita');
-
       setMessage(payload.message || 'Credenziali cancellate correttamente.');
       setSettingsInfo(payload);
-      if (payload.settings) {
-        setForm(applySettingsToForm(payload.settings));
-      } else {
-        setForm((current) => ({
-          ...current,
-          authMode: 'api-token',
-          tokenId: '',
-          tokenSecret: '',
-          username: '',
-          password: '',
-        }));
-      }
-
+      setForm(payload.settings ? applySettingsToForm(payload.settings) : defaultForm);
       await loadHealth();
       await loadSettings();
-    } catch (err) {
-      setError(err.message);
+    } catch (submitError) {
+      setError(submitError.message);
     } finally {
       setClearing(false);
     }
@@ -223,9 +154,7 @@ export default function SettingsPage() {
         <div>
           <div className="resource-type">Backend setup</div>
           <h2>Configurazione Proxmox</h2>
-          <p className="settings-copy">
-            Questo pannello salva nel backend l&apos;host Proxmox, il metodo di autenticazione e le credenziali operative.
-          </p>
+          <p className="settings-copy">Questo pannello salva nel backend host, autenticazione e credenziali operative di Proxmox.</p>
         </div>
         <div className="settings-health">
           <span className={`health-pill ${health?.configured ? 'is-good' : 'is-muted'}`}>
@@ -236,59 +165,26 @@ export default function SettingsPage() {
       </div>
 
       <form className="details-card settings-form" onSubmit={handleSave}>
-        {health?.adminProtected ? (
-          <div className="settings-section">
-            <label className="field-label">
-              Token amministrativo backend
-              <input
-                type="password"
-                value={adminToken}
-                onChange={(event) => setAdminToken(event.target.value)}
-                placeholder="Inserisci APP_ADMIN_TOKEN"
-              />
-            </label>
-            <p className="field-help">
-              Il token non viene salvato sul server: resta solo nella sessione del browser.
-            </p>
-          </div>
-        ) : null}
-
         <div className="settings-section">
           <h3>Connessione</h3>
           <label className="field-label">
             URL Proxmox
-            <input
-              value={form.baseUrl}
-              onChange={(event) => updateField('baseUrl', event.target.value)}
-              placeholder="https://pve.example.com:8006"
-            />
+            <input value={form.baseUrl} onChange={(event) => updateField('baseUrl', event.target.value)} placeholder="https://pve.example.com:8006" />
           </label>
 
           <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={form.allowInsecureTls}
-              onChange={(event) => updateField('allowInsecureTls', event.target.checked)}
-            />
+            <input type="checkbox" checked={form.allowInsecureTls} onChange={(event) => updateField('allowInsecureTls', event.target.checked)} />
             <span>Permetti TLS insicuro per ambienti lab o certificati self-signed</span>
           </label>
         </div>
 
         <div className="settings-section">
-          <h3>Autenticazione</h3>
-          <div className="segmented">
-            <button
-              type="button"
-              className={form.authMode === 'api-token' ? 'active' : ''}
-              onClick={() => updateField('authMode', 'api-token')}
-            >
+          <h3>Autenticazione Proxmox</h3>
+          <div className="segmented auth-mode-toggle">
+            <button type="button" className={form.authMode === 'api-token' ? 'active' : ''} onClick={() => updateField('authMode', 'api-token')}>
               API Token
             </button>
-            <button
-              type="button"
-              className={form.authMode === 'password' ? 'active' : ''}
-              onClick={() => updateField('authMode', 'password')}
-            >
+            <button type="button" className={form.authMode === 'password' ? 'active' : ''} onClick={() => updateField('authMode', 'password')}>
               Username
             </button>
           </div>
@@ -297,11 +193,7 @@ export default function SettingsPage() {
             <div className="settings-grid">
               <label className="field-label">
                 Token ID
-                <input
-                  value={form.tokenId}
-                  onChange={(event) => updateField('tokenId', event.target.value)}
-                  placeholder="user@realm!token-name"
-                />
+                <input value={form.tokenId} onChange={(event) => updateField('tokenId', event.target.value)} placeholder="root@pam!mobile-app" />
               </label>
               <label className="field-label">
                 Token secret
@@ -317,19 +209,11 @@ export default function SettingsPage() {
             <div className="settings-grid">
               <label className="field-label">
                 Username
-                <input
-                  value={form.username}
-                  onChange={(event) => updateField('username', event.target.value)}
-                  placeholder="root oppure root@pam"
-                />
+                <input value={form.username} onChange={(event) => updateField('username', event.target.value)} placeholder="root oppure root@pam" />
               </label>
               <label className="field-label">
                 Realm
-                <input
-                  value={form.realm}
-                  onChange={(event) => updateField('realm', event.target.value)}
-                  placeholder="pam"
-                />
+                <input value={form.realm} onChange={(event) => updateField('realm', event.target.value)} placeholder="pam" />
               </label>
               <label className="field-label">
                 Password
@@ -358,12 +242,7 @@ export default function SettingsPage() {
         </div>
 
         <div className="settings-actions single-action">
-          <button
-            type="button"
-            className="danger-button"
-            onClick={handleClearCredentials}
-            disabled={loading || testing || saving || clearing}
-          >
+          <button type="button" className="danger-button" onClick={handleClearCredentials} disabled={loading || testing || saving || clearing}>
             {clearing ? 'Cancellazione…' : 'Cancella credenziali salvate'}
           </button>
         </div>

@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import crypto from 'crypto';
 import fs from 'fs';
 import https from 'https';
 import path from 'path';
@@ -16,9 +17,13 @@ const APP_PORT = Number(process.env.PORT || 8787);
 const APP_BASE_URL = process.env.APP_BASE_URL || `http://localhost:${APP_PORT}`;
 const APP_ADMIN_TOKEN = process.env.APP_ADMIN_TOKEN || '';
 const APP_CONFIG_PATH = path.resolve(__dirname, process.env.APP_CONFIG_PATH || './data/app-config.json');
+const APP_USERS_PATH = path.resolve(__dirname, process.env.APP_USERS_PATH || './data/users.json');
 const CLIENT_DIST_DIR = path.resolve(__dirname, '../client/dist');
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
-const APP_VERSION = '0.3.1';
+const APP_VERSION = '0.5.0';
+const SESSION_COOKIE_NAME = 'pmw_session';
+const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
+const SESSION_SECURE = APP_BASE_URL.startsWith('https://');
 
 const ENV_PROXMOX_DEFAULTS = {
   baseUrl: normalizeBaseUrl(process.env.PROXMOX_BASE_URL || ''),
@@ -48,6 +53,10 @@ app.use((_req, res, next) => {
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   next();
 });
+app.use((req, _res, next) => {
+  req.authUser = getRequestUser(req);
+  next();
+});
 
 let authCache = {
   cacheKey: '',
@@ -57,6 +66,230 @@ let authCache = {
 };
 
 let persistedSettings = loadPersistedSettings();
+let userStore = loadUsersStore();
+const sessions = new Map();
+
+function normalizeUsername(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function validateRole(value) {
+  return ['admin', 'operator'].includes(value) ? value : null;
+}
+
+function validatePassword(value) {
+  if (typeof value !== 'string' || value.length < 8) {
+    throw createHttpError(400, 'PASSWORD_TOO_SHORT', 'La password deve contenere almeno 8 caratteri.');
+  }
+}
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  return {
+    salt,
+    hash: crypto.scryptSync(password, salt, 64).toString('hex'),
+  };
+}
+
+function verifyPassword(password, user) {
+  const candidate = crypto.scryptSync(password, user.passwordSalt, 64);
+  const expected = Buffer.from(user.passwordHash, 'hex');
+  return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
+}
+
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    console.error(`Impossibile leggere ${filePath}:`, error.message);
+    return null;
+  }
+}
+
+function writeJsonFile(filePath, data) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tempFile = `${filePath}.tmp`;
+  fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
+  fs.renameSync(tempFile, filePath);
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch (_error) {
+    // Ignore chmod failures on filesystems without unix permissions.
+  }
+}
+
+function loadUsersStore() {
+  if (!fs.existsSync(APP_USERS_PATH)) {
+    return { updatedAt: null, users: [] };
+  }
+
+  const parsed = readJsonFile(APP_USERS_PATH);
+  if (!parsed || typeof parsed !== 'object') {
+    return { updatedAt: null, users: [] };
+  }
+
+  return {
+    updatedAt: parsed.updatedAt || null,
+    users: Array.isArray(parsed.users) ? parsed.users : [],
+  };
+}
+
+function persistUsersStore(users) {
+  const nextStore = {
+    updatedAt: new Date().toISOString(),
+    users,
+  };
+
+  writeJsonFile(APP_USERS_PATH, nextStore);
+  userStore = nextStore;
+}
+
+function sanitizeUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    disabled: Boolean(user.disabled),
+    createdAt: user.createdAt || null,
+    updatedAt: user.updatedAt || null,
+    lastLoginAt: user.lastLoginAt || null,
+  };
+}
+
+function findUserByUsername(username) {
+  const normalized = normalizeUsername(username);
+  return userStore.users.find((user) => normalizeUsername(user.username) === normalized) || null;
+}
+
+function findUserById(userId) {
+  return userStore.users.find((user) => user.id === userId) || null;
+}
+
+function getAdminCount(excludeUserId = null) {
+  return userStore.users.filter((user) => user.role === 'admin' && !user.disabled && user.id !== excludeUserId).length;
+}
+
+function createUserRecord({ username, password, role }) {
+  const normalizedUsername = normalizeUsername(username);
+  if (!normalizedUsername) {
+    throw createHttpError(400, 'USERNAME_REQUIRED', 'Inserire uno username valido.');
+  }
+  if (findUserByUsername(normalizedUsername)) {
+    throw createHttpError(409, 'USERNAME_EXISTS', 'Esiste gia\' un utente con questo username.');
+  }
+
+  const normalizedRole = validateRole(role);
+  if (!normalizedRole) {
+    throw createHttpError(400, 'ROLE_INVALID', 'Ruolo non valido. Usare admin oppure operator.');
+  }
+
+  validatePassword(password);
+  const passwordInfo = hashPassword(password);
+  const now = new Date().toISOString();
+
+  return {
+    id: crypto.randomUUID(),
+    username: normalizedUsername,
+    role: normalizedRole,
+    disabled: false,
+    createdAt: now,
+    updatedAt: now,
+    lastLoginAt: null,
+    passwordSalt: passwordInfo.salt,
+    passwordHash: passwordInfo.hash,
+  };
+}
+
+function updateUserStore(userId, updater) {
+  const index = userStore.users.findIndex((user) => user.id === userId);
+  if (index === -1) {
+    throw createHttpError(404, 'USER_NOT_FOUND', 'Utente non trovato.');
+  }
+
+  const current = userStore.users[index];
+  const updated = updater(current);
+  const nextUsers = [...userStore.users];
+  nextUsers[index] = updated;
+  persistUsersStore(nextUsers);
+  return updated;
+}
+
+function parseCookieHeader(headerValue) {
+  return String(headerValue || '')
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((accumulator, part) => {
+      const separatorIndex = part.indexOf('=');
+      if (separatorIndex === -1) return accumulator;
+      const key = part.slice(0, separatorIndex).trim();
+      const value = decodeURIComponent(part.slice(separatorIndex + 1));
+      accumulator[key] = value;
+      return accumulator;
+    }, {});
+}
+
+function pruneSessions() {
+  const now = Date.now();
+  for (const [sessionId, session] of sessions.entries()) {
+    if (session.expiresAt <= now) {
+      sessions.delete(sessionId);
+    }
+  }
+}
+
+function createSession(userId) {
+  const sessionId = crypto.randomBytes(32).toString('hex');
+  sessions.set(sessionId, {
+    userId,
+    expiresAt: Date.now() + SESSION_TTL_MS,
+  });
+  return sessionId;
+}
+
+function serializeCookie(name, value, overrides = {}) {
+  const cookieParts = [
+    `${name}=${encodeURIComponent(value)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+  ];
+
+  if (overrides.maxAge !== undefined) {
+    cookieParts.push(`Max-Age=${overrides.maxAge}`);
+  }
+  if (SESSION_SECURE) {
+    cookieParts.push('Secure');
+  }
+
+  return cookieParts.join('; ');
+}
+
+function setSessionCookie(res, sessionId) {
+  res.setHeader('Set-Cookie', serializeCookie(SESSION_COOKIE_NAME, sessionId, { maxAge: Math.floor(SESSION_TTL_MS / 1000) }));
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', serializeCookie(SESSION_COOKIE_NAME, '', { maxAge: 0 }));
+}
+
+function getRequestUser(req) {
+  pruneSessions();
+  const cookies = parseCookieHeader(req.headers.cookie);
+  const sessionId = cookies[SESSION_COOKIE_NAME];
+  if (!sessionId) return null;
+
+  const session = sessions.get(sessionId);
+  if (!session) return null;
+
+  const user = findUserById(session.userId);
+  if (!user || user.disabled) {
+    sessions.delete(sessionId);
+    return null;
+  }
+
+  session.expiresAt = Date.now() + SESSION_TTL_MS;
+  return user;
+}
 
 function parseBoolean(value, fallback = false) {
   if (typeof value === 'boolean') return value;
@@ -183,15 +416,6 @@ function buildSettingsSnapshot(config) {
   };
 }
 
-function readJsonFile(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch (error) {
-    console.error(`Impossibile leggere ${filePath}:`, error.message);
-    return null;
-  }
-}
-
 function loadPersistedSettings() {
   if (!fs.existsSync(APP_CONFIG_PATH)) {
     return { updatedAt: null, proxmox: {} };
@@ -214,17 +438,7 @@ function persistSettings(config) {
     proxmox: config,
   };
 
-  fs.mkdirSync(path.dirname(APP_CONFIG_PATH), { recursive: true });
-
-  const tempFile = `${APP_CONFIG_PATH}.tmp`;
-  fs.writeFileSync(tempFile, JSON.stringify(nextStore, null, 2), { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(tempFile, APP_CONFIG_PATH);
-  try {
-    fs.chmodSync(APP_CONFIG_PATH, 0o600);
-  } catch (_error) {
-    // Ignore chmod failures on filesystems that do not support unix permissions.
-  }
-
+  writeJsonFile(APP_CONFIG_PATH, nextStore);
   persistedSettings = nextStore;
   authCache = { cacheKey: '', ticket: null, csrf: null, expiresAt: 0 };
 }
@@ -543,8 +757,52 @@ function safeConsoleUrl({ type, node, vmid }) {
   return `${config.baseUrl}/?console=lxc&xtermjs=1&vmid=${encodedVmid}&node=${encodedNode}`;
 }
 
-function requireAdminToken(req, res, next) {
-  if (!APP_ADMIN_TOKEN) return next();
+function hasAnyUsers() {
+  return userStore.users.length > 0;
+}
+
+function requireAuthenticatedUser(req, res, next) {
+  if (!hasAnyUsers()) {
+    return res.status(503).json({
+      error: 'Nessun utente applicativo configurato. Completa il setup iniziale.',
+      code: 'SETUP_REQUIRED',
+    });
+  }
+  if (req.authUser) return next();
+  return res.status(401).json({
+    error: 'Autenticazione richiesta.',
+    code: 'AUTH_REQUIRED',
+  });
+}
+
+function requireAdminUser(req, res, next) {
+  if (!hasAnyUsers()) {
+    return res.status(503).json({
+      error: 'Nessun utente applicativo configurato. Completa il setup iniziale.',
+      code: 'SETUP_REQUIRED',
+    });
+  }
+  if (!req.authUser) {
+    return res.status(401).json({
+      error: 'Autenticazione richiesta.',
+      code: 'AUTH_REQUIRED',
+    });
+  }
+  if (req.authUser.role === 'admin') return next();
+  return res.status(403).json({
+    error: 'Permessi insufficienti. Serve un account admin.',
+    code: 'ADMIN_REQUIRED',
+  });
+}
+
+function requireAdminAccess(req, res, next) {
+  if (req.authUser?.role === 'admin') return next();
+  if (!APP_ADMIN_TOKEN) {
+    return res.status(403).json({
+      error: 'Permessi insufficienti. Serve un account admin.',
+      code: 'ADMIN_REQUIRED',
+    });
+  }
   if (req.get('x-admin-token') === APP_ADMIN_TOKEN) return next();
   return res.status(401).json({
     error: 'Token amministrativo non valido o mancante.',
@@ -590,7 +848,193 @@ function extractClientError(error, fallbackMessage) {
   };
 }
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/auth/status', (req, res) => {
+  res.json({
+    ok: true,
+    version: APP_VERSION,
+    setupRequired: !hasAnyUsers(),
+    authenticated: Boolean(req.authUser),
+    user: req.authUser ? sanitizeUser(req.authUser) : null,
+  });
+});
+
+app.post('/api/auth/setup', (req, res) => {
+  try {
+    if (hasAnyUsers()) {
+      throw createHttpError(409, 'SETUP_ALREADY_COMPLETED', 'Il setup iniziale e\' gia\' stato completato.');
+    }
+
+    const user = createUserRecord({
+      username: req.body.username,
+      password: req.body.password,
+      role: 'admin',
+    });
+
+    persistUsersStore([user]);
+    const sessionId = createSession(user.id);
+    setSessionCookie(res, sessionId);
+
+    res.status(201).json({
+      ok: true,
+      message: 'Primo amministratore creato correttamente.',
+      user: sanitizeUser(user),
+    });
+  } catch (error) {
+    const { status, payload } = extractClientError(error, 'Setup iniziale non riuscito.');
+    res.status(status).json(payload);
+  }
+});
+
+app.post('/api/auth/login', (req, res) => {
+  try {
+    if (!hasAnyUsers()) {
+      throw createHttpError(503, 'SETUP_REQUIRED', 'Completa prima il setup iniziale del primo amministratore.');
+    }
+
+    const user = findUserByUsername(req.body.username);
+    if (!user || !verifyPassword(String(req.body.password || ''), user)) {
+      throw createHttpError(401, 'LOGIN_FAILED', 'Username o password non validi.');
+    }
+    if (user.disabled) {
+      throw createHttpError(403, 'USER_DISABLED', 'Questo utente e\' disabilitato.');
+    }
+
+    const sessionId = createSession(user.id);
+    setSessionCookie(res, sessionId);
+    const loggedInUser = updateUserStore(user.id, (currentUser) => ({
+      ...currentUser,
+      lastLoginAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+
+    res.json({
+      ok: true,
+      message: 'Accesso eseguito correttamente.',
+      user: sanitizeUser(loggedInUser),
+    });
+  } catch (error) {
+    const { status, payload } = extractClientError(error, 'Login non riuscito.');
+    res.status(status).json(payload);
+  }
+});
+
+app.post('/api/auth/logout', requireAuthenticatedUser, (req, res) => {
+  const cookies = parseCookieHeader(req.headers.cookie);
+  const sessionId = cookies[SESSION_COOKIE_NAME];
+  if (sessionId) {
+    sessions.delete(sessionId);
+  }
+  clearSessionCookie(res);
+  res.json({ ok: true, message: 'Logout eseguito.' });
+});
+
+app.get('/api/users', requireAdminUser, (_req, res) => {
+  res.json({
+    users: userStore.users.map(sanitizeUser).sort((a, b) => a.username.localeCompare(b.username)),
+  });
+});
+
+app.post('/api/users', requireAdminUser, (req, res) => {
+  try {
+    const user = createUserRecord({
+      username: req.body.username,
+      password: req.body.password,
+      role: req.body.role,
+    });
+    persistUsersStore([...userStore.users, user]);
+    res.status(201).json({
+      ok: true,
+      message: 'Utente creato correttamente.',
+      user: sanitizeUser(user),
+    });
+  } catch (error) {
+    const { status, payload } = extractClientError(error, 'Creazione utente non riuscita.');
+    res.status(status).json(payload);
+  }
+});
+
+app.put('/api/users/:userId', requireAdminUser, (req, res) => {
+  try {
+    const { userId } = req.params;
+    const existingUser = findUserById(userId);
+    if (!existingUser) {
+      throw createHttpError(404, 'USER_NOT_FOUND', 'Utente non trovato.');
+    }
+
+    const nextRole = req.body.role !== undefined ? validateRole(req.body.role) : existingUser.role;
+    if (!nextRole) {
+      throw createHttpError(400, 'ROLE_INVALID', 'Ruolo non valido. Usare admin oppure operator.');
+    }
+
+    const nextDisabled = req.body.disabled !== undefined ? Boolean(req.body.disabled) : Boolean(existingUser.disabled);
+    if (existingUser.role === 'admin' && (nextRole !== 'admin' || nextDisabled) && getAdminCount(existingUser.id) === 0) {
+      throw createHttpError(400, 'LAST_ADMIN_REQUIRED', 'Serve almeno un amministratore attivo.');
+    }
+
+    if (req.body.password !== undefined && req.body.password !== '') {
+      validatePassword(req.body.password);
+    }
+
+    const updatedUser = updateUserStore(userId, (currentUser) => {
+      const nextUser = {
+        ...currentUser,
+        role: nextRole,
+        disabled: nextDisabled,
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (req.body.password !== undefined && req.body.password !== '') {
+        const passwordInfo = hashPassword(req.body.password);
+        nextUser.passwordSalt = passwordInfo.salt;
+        nextUser.passwordHash = passwordInfo.hash;
+      }
+
+      return nextUser;
+    });
+
+    res.json({
+      ok: true,
+      message: 'Utente aggiornato correttamente.',
+      user: sanitizeUser(updatedUser),
+    });
+  } catch (error) {
+    const { status, payload } = extractClientError(error, 'Aggiornamento utente non riuscito.');
+    res.status(status).json(payload);
+  }
+});
+
+app.delete('/api/users/:userId', requireAdminUser, (req, res) => {
+  try {
+    const { userId } = req.params;
+    const existingUser = findUserById(userId);
+    if (!existingUser) {
+      throw createHttpError(404, 'USER_NOT_FOUND', 'Utente non trovato.');
+    }
+    if (existingUser.id === req.authUser.id) {
+      throw createHttpError(400, 'SELF_DELETE_FORBIDDEN', 'Non puoi eliminare il tuo utente mentre sei autenticato.');
+    }
+    if (existingUser.role === 'admin' && getAdminCount(existingUser.id) === 0) {
+      throw createHttpError(400, 'LAST_ADMIN_REQUIRED', 'Serve almeno un amministratore attivo.');
+    }
+
+    persistUsersStore(userStore.users.filter((user) => user.id !== userId));
+    for (const [sessionId, session] of sessions.entries()) {
+      if (session.userId === userId) {
+        sessions.delete(sessionId);
+      }
+    }
+
+    res.json({
+      ok: true,
+      message: 'Utente eliminato correttamente.',
+    });
+  } catch (error) {
+    const { status, payload } = extractClientError(error, 'Eliminazione utente non riuscita.');
+    res.status(status).json(payload);
+  }
+});
+
+app.get('/api/health', (req, res) => {
   const config = getEffectiveProxmoxConfig();
   res.json({
     ok: true,
@@ -600,14 +1044,16 @@ app.get('/api/health', (_req, res) => {
     authMode: config.authMode || null,
     adminProtected: Boolean(APP_ADMIN_TOKEN),
     configUpdatedAt: persistedSettings.updatedAt || null,
+    setupRequired: !hasAnyUsers(),
+    authenticated: Boolean(req.authUser),
   });
 });
 
-app.get('/api/settings', requireAdminToken, (_req, res) => {
+app.get('/api/settings', requireAdminAccess, (_req, res) => {
   res.json(buildSettingsResponse());
 });
 
-app.post('/api/settings/test', requireAdminToken, async (req, res) => {
+app.post('/api/settings/test', requireAdminAccess, async (req, res) => {
   try {
     const config = normalizeSubmittedConfig(req.body);
     validateProxmoxConfig(config);
@@ -624,7 +1070,7 @@ app.post('/api/settings/test', requireAdminToken, async (req, res) => {
   }
 });
 
-app.put('/api/settings', requireAdminToken, async (req, res) => {
+app.put('/api/settings', requireAdminAccess, async (req, res) => {
   try {
     const config = normalizeSubmittedConfig(req.body);
     validateProxmoxConfig(config);
@@ -643,7 +1089,7 @@ app.put('/api/settings', requireAdminToken, async (req, res) => {
   }
 });
 
-app.delete('/api/settings/credentials', requireAdminToken, (_req, res) => {
+app.delete('/api/settings/credentials', requireAdminAccess, (_req, res) => {
   try {
     clearStoredCredentials();
     res.json({
@@ -657,7 +1103,7 @@ app.delete('/api/settings/credentials', requireAdminToken, (_req, res) => {
   }
 });
 
-app.get('/api/resources', async (_req, res) => {
+app.get('/api/resources', requireAuthenticatedUser, async (_req, res) => {
   try {
     const data = await proxmoxRequest('GET', '/cluster/resources', { params: { type: 'vm' } });
     const items = await enrichResourceList(
@@ -674,7 +1120,7 @@ app.get('/api/resources', async (_req, res) => {
   }
 });
 
-app.get('/api/storages', async (_req, res) => {
+app.get('/api/storages', requireAuthenticatedUser, async (_req, res) => {
   try {
     const data = await proxmoxRequest('GET', '/cluster/resources', { params: { type: 'storage' } });
     const items = data
@@ -688,7 +1134,7 @@ app.get('/api/storages', async (_req, res) => {
   }
 });
 
-app.get('/api/resources/:type/:node/:vmid', async (req, res) => {
+app.get('/api/resources/:type/:node/:vmid', requireAuthenticatedUser, async (req, res) => {
   const { type, node, vmid } = req.params;
   if (!['qemu', 'lxc'].includes(type)) {
     return res.status(400).json({ error: 'Tipo non valido', code: 'INVALID_RESOURCE_TYPE' });
@@ -744,7 +1190,7 @@ app.get('/api/resources/:type/:node/:vmid', async (req, res) => {
   }
 });
 
-app.post('/api/resources/:type/:node/:vmid/:action', async (req, res) => {
+app.post('/api/resources/:type/:node/:vmid/:action', requireAuthenticatedUser, async (req, res) => {
   const { type, node, vmid, action } = req.params;
   const allowedActions = new Set(['start', 'shutdown', 'reboot', 'stop', 'reset', 'unlock']);
   if (!['qemu', 'lxc'].includes(type)) {

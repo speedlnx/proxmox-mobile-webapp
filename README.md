@@ -1,67 +1,121 @@
 # Proxmox Mobile WebApp
 
-Versione corrente: `0.3.1`
+Versione corrente: `0.5.0`
 
-Applicazione web mobile-first per amministrare VM QEMU e container LXC su Proxmox VE, con backend Node.js che gestisce autenticazione, configurazione persistente del target Proxmox e API operative per dashboard e dettaglio risorsa.
+Proxmox Mobile WebApp e' una webapp amministrativa mobile-first per Proxmox VE. Permette di accedere in modo sicuro a VM QEMU, container LXC e storage del cluster tramite un backend Node.js che centralizza autenticazione Proxmox, configurazione persistente, controllo accessi applicativo e API operative pensate per uso da smartphone, tablet o browser desktop.
 
-## Cosa e' cambiato in questa release
+## Descrizione del software
 
-Questa versione porta il progetto molto piu' vicino a un deploy reale:
+Il software non e' solo una dashboard di lettura: oggi e' una piccola console operativa per homelab e ambienti self-hosted, con:
 
-- configurazione del server Proxmox interamente dal backend tramite pagina `Impostazioni`
-- persistenza della configurazione su file server-side
-- supporto a test connessione prima del salvataggio
-- avvisi piu' chiari per token API validi ma con privilegi insufficienti
-- possibilita' di cancellare dal backend le credenziali Proxmox salvate
-- protezione opzionale del pannello impostazioni con `APP_ADMIN_TOKEN`
-- validazione piu' robusta della configurazione
-- headers di sicurezza HTTP di base
-- gestione errori lato backend piu' coerente
-- setup guidato quando il backend non e' ancora configurato
+- autenticazione locale all'app con utenti, ruoli e sessioni protette
+- configurazione del server Proxmox interamente dal backend
+- consultazione di VM, container e storage
+- azioni rapide su guest
+- accesso alla console web nativa di Proxmox
+- gestione centralizzata delle credenziali Proxmox senza esporle al browser
+
+L'architettura e' pensata per essere pubblicata come servizio singolo dietro reverse proxy, mantenendo il frontend React e il backend Express nello stesso progetto.
+
+## Cosa introduce questa release
+
+- autenticazione applicativa locale con bootstrap del primo amministratore
+- login/logout con sessioni su cookie `httpOnly`
+- gestione utenti con ruoli `admin` e `operator`
+- protezione delle API operative backend tramite sessione autenticata
+- pannello admin per creare, aggiornare, disabilitare ed eliminare utenti
+- configurazione Proxmox persistente dal backend
+- gestione credenziali Proxmox con supporto a token API o username/password
+- warning piu' chiari per token API validi ma con privilegi insufficienti
+- filtro dashboard per guest accesi, spenti o locked
+- visualizzazione note delle VM e degli LXC
+- azioni aggiuntive `reset` e `unlock`
+- nuova sezione per lo stato degli storage
 
 ## Architettura
 
 Il repository e' una monorepo Node.js con due workspace:
 
 - `client/`: frontend React + Vite
-- `server/`: backend Express che parla con Proxmox VE e serve la build del frontend in produzione
+- `server/`: backend Express che espone API applicative, autentica gli utenti locali, dialoga con Proxmox VE e serve la build frontend in produzione
 
-In produzione il backend puo' servire direttamente `client/dist`, quindi e' possibile distribuire un solo servizio Node.js dietro reverse proxy.
+In produzione il backend puo' servire direttamente `client/dist`, quindi e' possibile distribuire l'app come singolo servizio Node.js dietro Nginx, Traefik o altri reverse proxy.
 
 ## Funzionalita' principali
 
+### Accesso all'app
+
+- setup iniziale guidato del primo amministratore
+- login applicativo con utenti locali
+- ruoli supportati:
+  - `admin`
+  - `operator`
+- logout e sessioni protette tramite cookie `httpOnly`
+- pannello dedicato alla gestione utenti applicativi
+
 ### Operativita' Proxmox
 
-- elenco VM e container LXC non template
-- ordinamento alfabetico
+- elenco di VM QEMU e container LXC non template
 - ricerca per nome, nodo o VMID
 - filtro per tipo risorsa
+- filtro per stato:
+  - accesi
+  - spenti
+  - locked
 - refresh automatico dashboard ogni 15 secondi
-- azioni rapide `start`, `shutdown`, `reboot`
-- dettaglio risorsa con CPU, RAM, disco, uptime, OS type e rete
-- apertura console Proxmox in nuova scheda
+- visualizzazione stato lock del guest
+- dettaglio risorsa con:
+  - CPU
+  - RAM
+  - disco
+  - uptime
+  - OS type
+  - rete
+  - note/description
+- pulsanti azione:
+  - `start`
+  - `shutdown`
+  - `reboot`
+  - `reset`
+  - `unlock` dove consentito dall'API Proxmox e dai permessi disponibili
+- apertura della console web nativa di Proxmox in una nuova scheda
+
+### Storage
+
+- vista dedicata degli storage del cluster
+- stato storage
+- utilizzo percentuale
+- spazio usato, libero e totale
+- tipo plugin e indicazione shared/non shared
 
 ### Configurazione backend
 
-- pannello `Impostazioni` raggiungibile dall'app
+- pannello `Impostazioni` accessibile agli admin
 - configurazione URL Proxmox dal backend
-- supporto a due modalita' di autenticazione:
+- supporto a due modalita' di autenticazione Proxmox:
   - token API
   - username/password
-- possibilita' di mantenere secret o password gia' salvati senza reinserirli
-- possibilita' di cancellare dal backend token API, username e password salvati
-- test di connessione verso Proxmox prima del salvataggio definitivo
-- salvataggio della configurazione in `server/data/app-config.json` o nel path definito da `APP_CONFIG_PATH`
-- possibilita' di bloccare le API di configurazione con `APP_ADMIN_TOKEN`
+- test connessione prima del salvataggio
+- salvataggio persistente della configurazione lato server
+- cancellazione delle credenziali Proxmox salvate
+- supporto opzionale a `APP_ADMIN_TOKEN` come protezione aggiuntiva per le API sensibili
 
 ## Endpoint API
 
-### Pubblici applicativi
+### Autenticazione applicativa
+
+- `GET /api/auth/status`
+- `POST /api/auth/setup`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+
+### Operativita'
 
 - `GET /api/health`
 - `GET /api/resources`
 - `GET /api/resources/:type/:node/:vmid`
 - `POST /api/resources/:type/:node/:vmid/:action`
+- `GET /api/storages`
 
 ### Amministrazione backend
 
@@ -69,14 +123,16 @@ In produzione il backend puo' servire direttamente `client/dist`, quindi e' poss
 - `POST /api/settings/test`
 - `PUT /api/settings`
 - `DELETE /api/settings/credentials`
-
-Se `APP_ADMIN_TOKEN` e' valorizzato, questi endpoint richiedono l'header `x-admin-token`.
+- `GET /api/users`
+- `POST /api/users`
+- `PUT /api/users/:userId`
+- `DELETE /api/users/:userId`
 
 ## Requisiti
 
 - Node.js 20+
 - accesso di rete dal backend verso Proxmox VE
-- credenziali Proxmox o token API con privilegi adeguati
+- credenziali Proxmox oppure token API con privilegi adeguati
 
 ## Configurazione ambiente
 
@@ -92,10 +148,11 @@ Variabili supportate:
 | --- | --- |
 | `PORT` | Porta del backend, default `8787` |
 | `APP_BASE_URL` | URL pubblico dell'app per logging e deploy |
-| `APP_ADMIN_TOKEN` | Token opzionale per proteggere la configurazione backend |
+| `APP_ADMIN_TOKEN` | Token opzionale per proteggere ulteriormente la configurazione backend |
 | `APP_CONFIG_PATH` | Path del file JSON di configurazione persistente |
+| `APP_USERS_PATH` | Path del file JSON degli utenti applicativi |
 | `CORS_ORIGIN` | Origin consentita se il frontend gira su dominio separato |
-| `PROXMOX_BASE_URL` | Default iniziale Proxmox, usato solo come fallback |
+| `PROXMOX_BASE_URL` | Default iniziale Proxmox, usato come fallback prima del setup |
 | `PROXMOX_TOKEN_ID` | Default iniziale token ID |
 | `PROXMOX_TOKEN_SECRET` | Default iniziale token secret |
 | `PROXMOX_REALM` | Default realm per login password |
@@ -107,6 +164,7 @@ Nota importante:
 
 - le variabili `PROXMOX_*` fungono da configurazione iniziale o fallback
 - una volta salvata la configurazione dal pannello backend, il server usa il file persistito
+- gli utenti dell'app vengono memorizzati separatamente dal file di configurazione Proxmox
 
 ## Avvio in sviluppo
 
@@ -129,6 +187,22 @@ URL locali:
 
 Durante lo sviluppo Vite fa proxy delle richieste `/api` verso il backend.
 
+## Avvio in produzione
+
+Build frontend:
+
+```bash
+npm run build
+```
+
+Avvio backend:
+
+```bash
+npm run start
+```
+
+In produzione il backend serve direttamente la build frontend.
+
 ## Deploy consigliato
 
 Per un deploy piu' sicuro:
@@ -136,9 +210,9 @@ Per un deploy piu' sicuro:
 - esporre l'app dietro Nginx, Traefik o Nginx Proxy Manager
 - usare HTTPS valido lato pubblico
 - impostare `APP_ADMIN_TOKEN`
-- limitare l'accesso di amministrazione tramite VPN, IP allowlist o Zero Trust
+- proteggere l'accesso amministrativo con VPN, IP allowlist o Zero Trust
 - mantenere `ALLOW_INSECURE_TLS=false` in produzione, salvo ambienti controllati
-- conservare il file di configurazione persistente fuori dal versionamento
+- conservare fuori dal versionamento sia il file di configurazione Proxmox sia il file utenti
 
 ## Permessi Proxmox suggeriti
 
@@ -157,11 +231,15 @@ Applicare i permessi al path corretto del proprio cluster, nodo, pool o risorsa.
 ```text
 .
 |-- client/
+|   |-- src/
+|   |   |-- components/
+|   |   `-- pages/
 |-- server/
 |   |-- data/
 |   |-- index.js
 |   `-- package.json
 |-- package.json
+|-- package-lock.json
 |-- README.md
 `-- .env.example
 ```
@@ -170,15 +248,13 @@ Applicare i permessi al path corretto del proprio cluster, nodo, pool o risorsa.
 
 - la console resta quella nativa Proxmox aperta in una nuova scheda
 - i dettagli runtime di rete per le VM dipendono dal QEMU Guest Agent
+- l'azione `unlock` dipende dai permessi effettivi disponibili e dal supporto dell'API Proxmox per il tipo guest
 - non sono ancora presenti test automatici o pipeline CI/CD
-- non esiste un sistema multiutente interno all'app
 
 ## Roadmap ragionata
-
-Per arrivare a una release ancora piu' forte sul piano operativo:
 
 - aggiungere test backend e frontend
 - introdurre logging strutturato e audit trail amministrativo
 - gestire polling degli UPID e stato task Proxmox
 - aggiungere supporto PWA e notifiche
-- valutare cifratura at-rest del file di configurazione
+- valutare cifratura at-rest di configurazione e archivio utenti

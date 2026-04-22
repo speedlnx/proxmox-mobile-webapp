@@ -6,3 +6,4 @@ client/dist/
 .DS_Store
 server/data/*.json
 !server/data/.gitkeep
+users.json
