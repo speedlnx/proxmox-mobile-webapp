@@ -20,7 +20,7 @@ const APP_CONFIG_PATH = path.resolve(__dirname, process.env.APP_CONFIG_PATH || '
 const APP_USERS_PATH = path.resolve(__dirname, process.env.APP_USERS_PATH || './data/users.json');
 const CLIENT_DIST_DIR = path.resolve(__dirname, '../client/dist');
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
-const APP_VERSION = '0.7.0';
+const APP_VERSION = '0.8.0';
 const SESSION_COOKIE_NAME = 'pmw_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
 const SESSION_SECURE = APP_BASE_URL.startsWith('https://');
@@ -669,6 +669,60 @@ function normalizeStorage(item) {
   };
 }
 
+function parseUpid(upid) {
+  const value = String(upid || '');
+  if (!value.startsWith('UPID:')) {
+    return {
+      raw: value,
+      type: '',
+      vmid: null,
+      user: '',
+    };
+  }
+
+  const parts = value.split(':');
+  return {
+    raw: value,
+    node: parts[1] || '',
+    pid: parts[2] || '',
+    pstart: parts[3] || '',
+    startHex: parts[4] || '',
+    type: parts[5] || '',
+    vmid: parts[6] || '',
+    user: parts[7] || '',
+  };
+}
+
+function normalizeTaskStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  if (!status) return 'unknown';
+  if (status === 'running') return 'running';
+  if (status === 'ok') return 'ok';
+  if (status.startsWith('error')) return 'error';
+  if (status === 'stopped' || status === 'unknown') return status;
+  return status;
+}
+
+function normalizeTask(task) {
+  const upidInfo = parseUpid(task.upid || task.id || '');
+  const type = task.type || upidInfo.type || '';
+  const vmid = task.id != null && String(task.id).trim() !== '' ? String(task.id) : (upidInfo.vmid || '');
+  const status = normalizeTaskStatus(task.status || task.exitstatus || task.state);
+
+  return {
+    upid: task.upid || task.id || '',
+    node: task.node || upidInfo.node || '',
+    type,
+    vmid,
+    user: task.user || upidInfo.user || '',
+    status,
+    statusText: task.status || task.exitstatus || task.state || '',
+    startTime: pickNumber(task.starttime, task.start_time),
+    endTime: pickNumber(task.endtime, task.end_time),
+    pid: task.pid || upidInfo.pid || '',
+  };
+}
+
 function pickNumber(...values) {
   for (const value of values) {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -836,6 +890,71 @@ async function buildClusterOverview() {
     summary,
     nodes: detailedNodes.sort((a, b) => a.node.localeCompare(b.node)),
   };
+}
+
+async function enrichTask(task) {
+  const normalized = normalizeTask(task);
+
+  let statusInfo = null;
+  if (normalized.node && normalized.upid && (normalized.status === 'running' || normalized.status === 'error' || normalized.status === 'unknown')) {
+    statusInfo = await fetchOptionalProxmoxResource(`/nodes/${normalized.node}/tasks/${encodeURIComponent(normalized.upid)}/status`);
+  }
+
+  const effectiveStatus = statusInfo?.status || statusInfo?.exitstatus || normalized.statusText || normalized.status;
+  const nextStatus = normalizeTaskStatus(effectiveStatus);
+
+  let logTail = [];
+  if (normalized.node && normalized.upid && nextStatus === 'error') {
+    const log = await fetchOptionalProxmoxResource(`/nodes/${normalized.node}/tasks/${encodeURIComponent(normalized.upid)}/log`);
+    if (Array.isArray(log)) {
+      logTail = log.slice(-8).map((entry) => entry.t || entry.n || String(entry)).filter(Boolean);
+    }
+  }
+
+  return {
+    ...normalized,
+    status: nextStatus,
+    statusText: effectiveStatus || normalized.statusText || '',
+    startTime: pickNumber(statusInfo?.starttime, normalized.startTime),
+    endTime: pickNumber(statusInfo?.endtime, normalized.endTime),
+    pid: statusInfo?.pid || normalized.pid,
+    exitStatus: statusInfo?.exitstatus || null,
+    details: {
+      hasStatusDetails: Boolean(statusInfo),
+      logTail,
+    },
+  };
+}
+
+async function loadClusterTasks({ limit = 100 } = {}) {
+  let tasks = [];
+
+  try {
+    const data = await proxmoxRequest('GET', '/cluster/tasks');
+    tasks = Array.isArray(data) ? data : [];
+  } catch (error) {
+    if (!axios.isAxiosError(error) || error.response?.status !== 400) {
+      throw error;
+    }
+
+    const nodeResources = await proxmoxRequest('GET', '/cluster/resources', { params: { type: 'node' } });
+    const nodes = nodeResources
+      .filter((item) => item.type === 'node' && item.node)
+      .map((item) => item.node);
+
+    const nodeTaskLists = await Promise.all(
+      nodes.map(async (node) => {
+        const nodeTasks = await fetchOptionalProxmoxResource(`/nodes/${node}/tasks`);
+        return Array.isArray(nodeTasks) ? nodeTasks.map((task) => ({ ...task, node: task.node || node })) : [];
+      })
+    );
+
+    tasks = nodeTaskLists.flat();
+  }
+
+  const enriched = await Promise.all(tasks.slice(0, limit).map((task) => enrichTask(task)));
+
+  return enriched.sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
 }
 
 function normalizeLockValue(value) {
@@ -1332,6 +1451,18 @@ app.get('/api/storages', requireAuthenticatedUser, async (_req, res) => {
     res.json({ items });
   } catch (error) {
     const { status, payload } = extractClientError(error, 'Errore nel caricamento degli storage.');
+    res.status(status).json(payload);
+  }
+});
+
+app.get('/api/tasks', requireAuthenticatedUser, async (req, res) => {
+  try {
+    const requestedLimit = pickNumber(req.query.limit);
+    const limit = Math.max(10, Math.min(200, requestedLimit || 100));
+    const items = await loadClusterTasks({ limit });
+    res.json({ items });
+  } catch (error) {
+    const { status, payload } = extractClientError(error, 'Errore nel caricamento dei task Proxmox.');
     res.status(status).json(payload);
   }
 });

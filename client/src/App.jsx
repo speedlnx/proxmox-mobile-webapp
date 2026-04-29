@@ -4,6 +4,7 @@ import DashboardPage from './pages/DashboardPage';
 import DetailsPage from './pages/DetailsPage';
 import SettingsPage from './pages/SettingsPage';
 import StoragePage from './pages/StoragePage';
+import TasksPage from './pages/TasksPage';
 import LoginPage from './pages/LoginPage';
 import SetupPage from './pages/SetupPage';
 import UsersPage from './pages/UsersPage';
@@ -94,6 +95,9 @@ export default function App() {
           <NavLink to="/storage" className="header-link">
             Storage
           </NavLink>
+          <NavLink to="/tasks" className="header-link">
+            Task
+          </NavLink>
           {isAdmin ? (
             <NavLink to="/settings" className="header-link">
               Impostazioni
@@ -117,6 +121,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<DashboardPage canManageResources={authState.capabilities.canManageResources} />} />
           <Route path="/storage" element={<StoragePage />} />
+          <Route path="/tasks" element={<TasksPage />} />
           <Route path="/settings" element={isAdmin ? <SettingsPage /> : <Navigate to="/" replace />} />
           <Route path="/users" element={isAdmin ? <UsersPage currentUser={authState.user} /> : <Navigate to="/" replace />} />
           <Route path="/resource/:type/:node/:vmid" element={<DetailsPage canManageResources={authState.capabilities.canManageResources} />} />

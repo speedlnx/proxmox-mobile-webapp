@@ -1,6 +1,6 @@
 # Proxmox Mobile WebApp
 
-Versione corrente: `0.7.0`
+Versione corrente: `0.8.0`
 
 Proxmox Mobile WebApp e' una webapp amministrativa mobile-first per Proxmox VE. Permette di accedere in modo sicuro a VM QEMU, container LXC e storage del cluster tramite un backend Node.js che centralizza autenticazione Proxmox, configurazione persistente, controllo accessi applicativo e API operative pensate per uso da smartphone, tablet o browser desktop.
 
@@ -11,6 +11,7 @@ Il software non e' solo una dashboard di lettura: oggi e' una piccola console op
 - autenticazione locale all'app con utenti, ruoli e sessioni protette
 - configurazione del server Proxmox interamente dal backend
 - consultazione di VM, container e storage
+- consultazione e monitoraggio dei task Proxmox con UPID
 - riepilogo dello stato del cluster e dei nodi hypervisor
 - azioni rapide su guest
 - accesso alla console web nativa di Proxmox
@@ -41,6 +42,7 @@ L'architettura e' pensata per essere pubblicata come servizio singolo dietro rev
 - aggiornamento live piu' frequente delle metriche guest e overview
 - supporto installazione come web app/PWA con manifest, icone e service worker
 - riepilogo cluster/hypervisor con CPU, core, thread, RAM, swap, disco e load
+- nuova sezione Task per monitorare operazioni Proxmox, task in corso ed errori
 
 ## Architettura
 
@@ -126,6 +128,33 @@ Ruoli applicativi:
 - spazio usato, libero e totale
 - tipo plugin e indicazione shared/non shared
 
+### Task Proxmox
+
+- vista dedicata ai task cluster-wide con aggiornamento automatico
+- monitoraggio degli `UPID`
+- evidenza chiara di task:
+  - in corso
+  - completati
+  - in errore
+- filtri per:
+  - stato
+  - tipologia task
+- ricerca per:
+  - `UPID`
+  - nodo
+  - VMID
+  - utente
+  - stato
+- dettaglio con:
+  - nodo
+  - utente
+  - PID
+  - start/end
+  - durata
+  - stato raw restituito da Proxmox
+- coda del log per i task falliti
+- fallback automatico da `/cluster/tasks` a `/nodes/{node}/tasks` se la vista cluster-wide non e' supportata o il token non la espone correttamente
+
 ### Web App
 
 - manifest web app
@@ -162,6 +191,7 @@ Ruoli applicativi:
 - `POST /api/resources/:type/:node/:vmid/:action`
 - `GET /api/storages`
 - `GET /api/overview`
+- `GET /api/tasks`
 
 ### Amministrazione backend
 
