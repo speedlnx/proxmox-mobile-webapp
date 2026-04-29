@@ -22,7 +22,27 @@ function formatUptime(seconds) {
   return `${days}g ${hours}h ${minutes}m`;
 }
 
-export default function DetailsPage() {
+function percent(current, total) {
+  if (!total || current == null) return null;
+  return Math.min(100, Math.round((current / total) * 100));
+}
+
+function UsageBar({ label, percentValue, detail }) {
+  return (
+    <div className="usage-meter">
+      <div className="usage-meter__labels">
+        <span>{label}</span>
+        <strong>{percentValue == null ? '—' : `${percentValue}%`}</strong>
+      </div>
+      <div className="usage-meter__bar" role="progressbar" aria-valuenow={percentValue ?? 0} aria-valuemin="0" aria-valuemax="100" aria-label={`${label} usage`}>
+        <div className="usage-meter__fill" style={{ width: `${percentValue ?? 0}%` }} />
+      </div>
+      <div className="usage-meter__detail">{detail}</div>
+    </div>
+  );
+}
+
+export default function DetailsPage({ canManageResources }) {
   const { type, node, vmid } = useParams();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -62,7 +82,7 @@ export default function DetailsPage() {
     load();
     const id = setInterval(() => {
       load({ silent: true });
-    }, 15000);
+    }, 5000);
     return () => clearInterval(id);
   }, [type, node, vmid]);
 
@@ -71,6 +91,9 @@ export default function DetailsPage() {
   if (!data) return null;
 
   const { info, network } = data;
+  const cpuPercent = info.cpu == null ? null : Math.round(info.cpu * 100);
+  const ramPercent = percent(info.mem, info.maxmem);
+  const diskPercent = percent(info.disk, info.maxdisk);
 
   return (
     <section className="details-page">
@@ -98,6 +121,28 @@ export default function DetailsPage() {
           <div><span>Uptime</span><strong>{formatUptime(info.uptime)}</strong></div>
           <div><span>OS Type</span><strong>{info.ostype || '—'}</strong></div>
         </div>
+
+        <div className="usage-stack usage-stack--details">
+          <UsageBar
+            label="CPU"
+            percentValue={cpuPercent}
+            detail={info.cpus ? `${info.cpus} vCPU assegnate` : 'Uso istantaneo CPU'}
+          />
+          <UsageBar
+            label="RAM"
+            percentValue={ramPercent}
+            detail={`${formatBytes(info.mem)} / ${formatBytes(info.maxmem)}`}
+          />
+          <UsageBar
+            label="Disco"
+            percentValue={diskPercent}
+            detail={`${formatBytes(info.disk)} / ${formatBytes(info.maxdisk)}`}
+          />
+        </div>
+
+        {!canManageResources ? (
+          <div className="empty-state warning">Account in sola lettura: le azioni operative sulla macchina non sono disponibili.</div>
+        ) : null}
 
         <div className="console-box">
           <h3>Console</h3>

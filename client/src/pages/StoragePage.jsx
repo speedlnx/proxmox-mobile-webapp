@@ -17,6 +17,12 @@ function percent(used, total) {
   return Math.min(100, Math.round((used / total) * 100));
 }
 
+function resolveAvailable(item) {
+  if (item.avail != null) return item.avail;
+  if (item.total != null && item.used != null) return Math.max(0, item.total - item.used);
+  return null;
+}
+
 export default function StoragePage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -71,6 +77,7 @@ export default function StoragePage() {
 
       {items.map((item) => {
         const usage = percent(item.used, item.total);
+        const available = resolveAvailable(item);
         return (
           <article className="details-card" key={`${item.node}-${item.storage}`}>
             <div className="resource-card__top">
@@ -84,11 +91,28 @@ export default function StoragePage() {
               </span>
             </div>
 
+            <div className="storage-usage">
+              <div className="storage-usage__labels">
+                <span>Utilizzo spazio</span>
+                <strong>{usage == null ? '—' : `${usage}%`}</strong>
+              </div>
+              <div
+                className="storage-usage__bar"
+                role="progressbar"
+                aria-valuenow={usage ?? 0}
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-label={`Utilizzo storage ${item.storage}`}
+              >
+                <div className="storage-usage__fill" style={{ width: `${usage ?? 0}%` }} />
+              </div>
+            </div>
+
             <div className="details-grid">
               <div><span>Utilizzo</span><strong>{usage == null ? '—' : `${usage}%`}</strong></div>
               <div><span>Shared</span><strong>{item.shared ? 'Si' : 'No'}</strong></div>
               <div><span>Usato</span><strong>{formatBytes(item.used)}</strong></div>
-              <div><span>Libero</span><strong>{formatBytes(item.avail)}</strong></div>
+              <div><span>Libero</span><strong>{formatBytes(available)}</strong></div>
               <div><span>Totale</span><strong>{formatBytes(item.total)}</strong></div>
               <div><span>Tipo</span><strong>{item.plugintype || item.type || '—'}</strong></div>
             </div>

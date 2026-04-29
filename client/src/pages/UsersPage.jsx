@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 const defaultForm = {
   username: '',
   password: '',
-  role: 'operator',
+  role: 'viewer',
 };
 
 export default function UsersPage({ currentUser }) {
@@ -89,7 +89,7 @@ export default function UsersPage({ currentUser }) {
       <div className="details-card">
         <div className="resource-type">Access control</div>
         <h2>Utenti applicativi</h2>
-        <p className="settings-copy">Gli admin possono gestire utenti, impostazioni backend e accesso completo al software.</p>
+        <p className="settings-copy">Gli admin gestiscono utenti e impostazioni. Gli operator possono eseguire azioni sulle macchine. I viewer hanno accesso in sola lettura.</p>
       </div>
 
       <form className="details-card settings-form" onSubmit={createUser}>
@@ -111,6 +111,7 @@ export default function UsersPage({ currentUser }) {
             <label className="field-label">
               Ruolo
               <select value={form.role} onChange={(event) => setForm((current) => ({ ...current, role: event.target.value }))}>
+                <option value="viewer">viewer</option>
                 <option value="operator">operator</option>
                 <option value="admin">admin</option>
               </select>
@@ -154,6 +155,7 @@ export default function UsersPage({ currentUser }) {
                   }
                 }}
               >
+                <option value="viewer">viewer</option>
                 <option value="operator">operator</option>
                 <option value="admin">admin</option>
               </select>

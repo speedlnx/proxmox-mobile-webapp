@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ResourceCard from '../components/ResourceCard';
 
+const DISPLAY_MODE_STORAGE_KEY = 'pmw_dashboard_display_mode';
+
 function formatBytes(value) {
   if (value == null) return '—';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -19,7 +21,7 @@ function formatLoad(loadavg) {
   return loadavg.map((value) => Number(value).toFixed(2)).join(' / ');
 }
 
-export default function DashboardPage() {
+export default function DashboardPage({ canManageResources }) {
   const [items, setItems] = useState([]);
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -30,6 +32,7 @@ export default function DashboardPage() {
   const [error, setError] = useState('');
   const [setupRequired, setSetupRequired] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [displayMode, setDisplayMode] = useState(() => window.localStorage.getItem(DISPLAY_MODE_STORAGE_KEY) || 'comfortable');
   const hasDataRef = useRef(false);
 
   async function load({ silent = false } = {}) {
@@ -41,7 +44,10 @@ export default function DashboardPage() {
     }
 
     try {
-      const resourcesResponse = await fetch('/api/resources');
+      const [resourcesResponse, overviewResponse] = await Promise.all([
+        fetch('/api/resources'),
+        fetch('/api/overview').catch(() => null),
+      ]);
       const resourcesData = await resourcesResponse.json();
 
       if (!resourcesResponse.ok) {
@@ -49,12 +55,12 @@ export default function DashboardPage() {
         throw new Error(resourcesData.error || 'Errore nel caricamento');
       }
 
-      const overviewResult = await fetch('/api/overview')
-        .then(async (response) => ({
-          ok: response.ok,
-          data: await response.json(),
-        }))
-        .catch(() => null);
+      const overviewResult = overviewResponse
+        ? {
+            ok: overviewResponse.ok,
+            data: await overviewResponse.json(),
+          }
+        : null;
 
       setSetupRequired(false);
       setItems(resourcesData.items);
@@ -80,9 +86,13 @@ export default function DashboardPage() {
     load();
     const id = setInterval(() => {
       load({ silent: true });
-    }, 15000);
+    }, 5000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(DISPLAY_MODE_STORAGE_KEY, displayMode);
+  }, [displayMode]);
 
   async function handleAction(item, action) {
     const confirmed = window.confirm(`Confermi l'azione ${action} su ${item.name}?`);
@@ -127,10 +137,10 @@ export default function DashboardPage() {
           </div>
 
           <div className="details-grid overview-grid">
-            <div><span>CPU logiche</span><strong>{overview.summary.cpus || '—'}</strong></div>
-            <div><span>Socket</span><strong>{overview.summary.sockets || '—'}</strong></div>
-            <div><span>Core totali</span><strong>{overview.summary.cores || '—'}</strong></div>
-            <div><span>Thread totali</span><strong>{overview.summary.threads || '—'}</strong></div>
+            <div><span>CPU logiche</span><strong>{overview.summary.cpus ?? '—'}</strong></div>
+            <div><span>Socket</span><strong>{overview.summary.sockets ?? '—'}</strong></div>
+            <div><span>Core totali</span><strong>{overview.summary.cores ?? '—'}</strong></div>
+            <div><span>Thread totali</span><strong>{overview.summary.threads ?? '—'}</strong></div>
             <div><span>RAM totale</span><strong>{formatBytes(overview.summary.memoryTotal)}</strong></div>
             <div><span>RAM disponibile</span><strong>{formatBytes(overview.summary.memoryFree)}</strong></div>
             <div><span>Swap totale</span><strong>{formatBytes(overview.summary.swapTotal)}</strong></div>
@@ -146,7 +156,7 @@ export default function DashboardPage() {
                   <div>
                     <strong>{node.node}</strong>
                     <div className="resource-meta">
-                      CPU {node.cpus || '—'} · Core {(node.sockets || 0) * (node.coresPerSocket || 0) || '—'} · Thread {node.threadsPerCore || '—'}x/core
+                      CPU {node.cpus ?? '—'} · Socket {node.sockets ?? '—'} · Core {node.totalCores ?? '—'} · Thread {node.totalThreads ?? '—'}
                     </div>
                   </div>
                   <span className={`status-badge ${node.status === 'online' ? 'status-running' : 'status-stopped'}`}>
@@ -158,6 +168,11 @@ export default function DashboardPage() {
                   <span>RAM: {formatBytes(node.memoryUsed)} / {formatBytes(node.memoryTotal)}</span>
                   <span>Swap: {formatBytes(node.swapUsed)} / {formatBytes(node.swapTotal)}</span>
                   <span>Disco: {formatBytes(node.diskUsed)} / {formatBytes(node.diskTotal)}</span>
+                  {node.diagnostics?.missingCpuTopology || node.diagnostics?.missingSwap || node.diagnostics?.missingLoad ? (
+                    <span className="overview-diagnostic">
+                      Alcuni dati nodo non sono disponibili via API. Verifica `Sys.Audit` sul path `/nodes/{node.node}` o i permessi effettivi del token.
+                    </span>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -181,6 +196,10 @@ export default function DashboardPage() {
           <button className={statusFilter === 'stopped' ? 'active' : ''} onClick={() => setStatusFilter('stopped')}>Spenti</button>
           <button className={statusFilter === 'locked' ? 'active' : ''} onClick={() => setStatusFilter('locked')}>Locked</button>
         </div>
+        <div className="segmented segmented-dual">
+          <button className={displayMode === 'comfortable' ? 'active' : ''} onClick={() => setDisplayMode('comfortable')}>Normale</button>
+          <button className={displayMode === 'compact' ? 'active' : ''} onClick={() => setDisplayMode('compact')}>Compatta</button>
+        </div>
       </div>
 
       {loading && <div className="empty-state">Caricamento in corso…</div>}
@@ -194,7 +213,7 @@ export default function DashboardPage() {
       ) : null}
       {!loading && !error && filteredItems.length === 0 && <div className="empty-state">Nessuna risorsa trovata</div>}
 
-      <div className="card-grid">
+      <div className={`card-grid ${displayMode === 'compact' ? 'card-grid--compact' : ''}`}>
         {filteredItems.map((item) => {
           const key = `${item.type}-${item.node}-${item.vmid}`;
           return (
@@ -203,6 +222,8 @@ export default function DashboardPage() {
               item={item}
               onAction={handleAction}
               pendingAction={pendingKey.startsWith(key)}
+              canManageResources={canManageResources}
+              compact={displayMode === 'compact'}
             />
           );
         })}

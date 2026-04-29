@@ -20,7 +20,7 @@ const APP_CONFIG_PATH = path.resolve(__dirname, process.env.APP_CONFIG_PATH || '
 const APP_USERS_PATH = path.resolve(__dirname, process.env.APP_USERS_PATH || './data/users.json');
 const CLIENT_DIST_DIR = path.resolve(__dirname, '../client/dist');
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '';
-const APP_VERSION = '0.6.0';
+const APP_VERSION = '0.7.0';
 const SESSION_COOKIE_NAME = 'pmw_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
 const SESSION_SECURE = APP_BASE_URL.startsWith('https://');
@@ -74,7 +74,11 @@ function normalizeUsername(value) {
 }
 
 function validateRole(value) {
-  return ['admin', 'operator'].includes(value) ? value : null;
+  return ['admin', 'operator', 'viewer'].includes(value) ? value : null;
+}
+
+function canManageResources(user) {
+  return user?.role === 'admin' || user?.role === 'operator';
 }
 
 function validatePassword(value) {
@@ -179,7 +183,7 @@ function createUserRecord({ username, password, role }) {
 
   const normalizedRole = validateRole(role);
   if (!normalizedRole) {
-    throw createHttpError(400, 'ROLE_INVALID', 'Ruolo non valido. Usare admin oppure operator.');
+    throw createHttpError(400, 'ROLE_INVALID', 'Ruolo non valido. Usare admin, operator oppure viewer.');
   }
 
   validatePassword(password);
@@ -642,6 +646,14 @@ function normalizeResource(item) {
 }
 
 function normalizeStorage(item) {
+  const total = item.maxdisk ?? item.total ?? null;
+  const used = item.disk ?? item.used ?? null;
+  const avail = item.avail ?? (
+    typeof total === 'number' && Number.isFinite(total) && typeof used === 'number' && Number.isFinite(used)
+      ? Math.max(0, total - used)
+      : null
+  );
+
   return {
     id: item.id,
     storage: item.storage || item.id || '',
@@ -650,9 +662,9 @@ function normalizeStorage(item) {
     type: item.type || '',
     plugintype: item.plugintype || '',
     shared: Boolean(item.shared),
-    total: item.maxdisk ?? item.total ?? null,
-    used: item.disk ?? item.used ?? null,
-    avail: item.avail ?? null,
+    total,
+    used,
+    avail,
     content: item.content || '',
   };
 }
@@ -660,8 +672,27 @@ function normalizeStorage(item) {
 function pickNumber(...values) {
   for (const value of values) {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim() !== '') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
   }
   return null;
+}
+
+async function fetchOptionalProxmoxResource(path) {
+  try {
+    return await proxmoxRequest('GET', path);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function resolveUsedTotalPair(primaryUsed, primaryTotal, fallbackUsed, fallbackTotal) {
+  const used = pickNumber(primaryUsed, fallbackUsed);
+  const total = pickNumber(primaryTotal, fallbackTotal);
+  const free = total != null && used != null ? Math.max(0, total - used) : null;
+  return { used, total, free };
 }
 
 function normalizeLoadAverage(loadavg) {
@@ -670,6 +701,9 @@ function normalizeLoadAverage(loadavg) {
   }
   if (typeof loadavg === 'string') {
     return loadavg.split(/[,\s]+/).filter(Boolean).slice(0, 3).map((value) => Number(value) || 0);
+  }
+  if (loadavg && typeof loadavg === 'object') {
+    return Object.values(loadavg).slice(0, 3).map((value) => Number(value) || 0);
   }
   return [];
 }
@@ -680,69 +714,104 @@ async function buildClusterOverview() {
 
   const detailedNodes = await Promise.all(
     activeNodes.map(async (nodeResource) => {
-      let status = {};
-      try {
-        status = await proxmoxRequest('GET', `/nodes/${nodeResource.node}/status/current`);
-      } catch (_error) {
-        status = {};
-      }
+      const [status, dedicatedCpuInfo] = await Promise.all([
+        fetchOptionalProxmoxResource(`/nodes/${nodeResource.node}/status/current`),
+        fetchOptionalProxmoxResource(`/nodes/${nodeResource.node}/hardware/cpuinfo`),
+      ]);
 
-      const cpuInfo = status.cpuinfo || {};
-      const cpus = pickNumber(cpuInfo.cpus, nodeResource.maxcpu);
-      const sockets = pickNumber(cpuInfo.sockets, status.sockets);
-      const coresPerSocket = pickNumber(cpuInfo.cores, status.cores);
-      const threadsPerCore = pickNumber(cpuInfo.threads, status.threads);
-      const memoryTotal = pickNumber(status.memory?.total, nodeResource.maxmem, status.maxmem);
-      const memoryUsed = pickNumber(status.memory?.used, nodeResource.mem, status.mem);
-      const memoryFree = memoryTotal != null && memoryUsed != null ? Math.max(0, memoryTotal - memoryUsed) : null;
-      const swapTotal = pickNumber(status.swap?.total);
-      const swapUsed = pickNumber(status.swap?.used);
-      const swapFree = swapTotal != null && swapUsed != null ? Math.max(0, swapTotal - swapUsed) : null;
-      const diskTotal = pickNumber(status.rootfs?.total, nodeResource.maxdisk, status.maxdisk);
-      const diskUsed = pickNumber(status.rootfs?.used, nodeResource.disk, status.disk);
-      const diskFree = diskTotal != null && diskUsed != null ? Math.max(0, diskTotal - diskUsed) : null;
-      const loadavg = normalizeLoadAverage(status.loadavg);
+      const effectiveStatus = status || {};
+      const cpuInfo = effectiveStatus.cpuinfo || dedicatedCpuInfo || {};
+      const cpus = pickNumber(cpuInfo.cpus, dedicatedCpuInfo?.cpus, nodeResource.maxcpu);
+      const sockets = pickNumber(
+        cpuInfo.sockets,
+        dedicatedCpuInfo?.sockets,
+        effectiveStatus.sockets
+      );
+      const coresPerSocket = pickNumber(
+        cpuInfo.cores,
+        dedicatedCpuInfo?.cores,
+        effectiveStatus.cores
+      );
+      const threadsPerCore = pickNumber(
+        cpuInfo.threads,
+        dedicatedCpuInfo?.threads,
+        effectiveStatus.threads
+      );
+      const totalCores = pickNumber(
+        sockets != null && coresPerSocket != null ? sockets * coresPerSocket : null,
+        cpus != null && threadsPerCore != null ? Math.round(cpus / threadsPerCore) : null
+      );
+      const totalThreads = pickNumber(
+        cpus,
+        totalCores != null && threadsPerCore != null ? totalCores * threadsPerCore : null
+      );
+
+      const memory = resolveUsedTotalPair(
+        effectiveStatus.memory?.used,
+        effectiveStatus.memory?.total,
+        nodeResource.mem,
+        nodeResource.maxmem
+      );
+      const swap = resolveUsedTotalPair(
+        effectiveStatus.swap?.used,
+        effectiveStatus.swap?.total,
+        pickNumber(effectiveStatus.swapused, effectiveStatus.swap),
+        pickNumber(effectiveStatus.swaptotal, effectiveStatus.maxswap)
+      );
+      const disk = resolveUsedTotalPair(
+        effectiveStatus.rootfs?.used,
+        effectiveStatus.rootfs?.total,
+        nodeResource.disk,
+        nodeResource.maxdisk
+      );
+      const loadavg = normalizeLoadAverage(effectiveStatus.loadavg);
 
       return {
         node: nodeResource.node,
-        status: nodeResource.status || status.status || 'unknown',
-        cpuUsage: pickNumber(nodeResource.cpu, status.cpu),
-        cpus: cpus ?? 0,
-        sockets: sockets ?? 0,
-        coresPerSocket: coresPerSocket ?? 0,
-        threadsPerCore: threadsPerCore ?? 0,
-        memoryTotal,
-        memoryUsed,
-        memoryFree,
-        swapTotal,
-        swapUsed,
-        swapFree,
-        diskTotal,
-        diskUsed,
-        diskFree,
+        status: nodeResource.status || effectiveStatus.status || 'unknown',
+        cpuUsage: pickNumber(nodeResource.cpu, effectiveStatus.cpu),
+        cpus,
+        sockets,
+        coresPerSocket,
+        totalCores,
+        threadsPerCore,
+        totalThreads,
+        memoryTotal: memory.total,
+        memoryUsed: memory.used,
+        memoryFree: memory.free,
+        swapTotal: swap.total,
+        swapUsed: swap.used,
+        swapFree: swap.free,
+        diskTotal: disk.total,
+        diskUsed: disk.used,
+        diskFree: disk.free,
         loadavg,
+        diagnostics: {
+          statusCurrentAvailable: Boolean(status),
+          cpuInfoAvailable: Boolean(dedicatedCpuInfo || effectiveStatus.cpuinfo),
+          missingCpuTopology: sockets == null || totalCores == null,
+          missingSwap: swap.total == null || swap.used == null,
+          missingLoad: loadavg.length === 0,
+        },
       };
     })
   );
 
   const summary = detailedNodes.reduce((accumulator, node) => {
     accumulator.nodes += 1;
-    accumulator.cpus += node.cpus || 0;
-    accumulator.sockets += node.sockets || 0;
-    accumulator.cores += (node.sockets || 0) * (node.coresPerSocket || 0);
-    accumulator.threads +=
-      node.sockets && node.coresPerSocket && node.threadsPerCore
-        ? node.sockets * node.coresPerSocket * node.threadsPerCore
-        : node.cpus || 0;
-    accumulator.memoryTotal += node.memoryTotal || 0;
-    accumulator.memoryUsed += node.memoryUsed || 0;
-    accumulator.memoryFree += node.memoryFree || 0;
-    accumulator.swapTotal += node.swapTotal || 0;
-    accumulator.swapUsed += node.swapUsed || 0;
-    accumulator.swapFree += node.swapFree || 0;
-    accumulator.diskTotal += node.diskTotal || 0;
-    accumulator.diskUsed += node.diskUsed || 0;
-    accumulator.diskFree += node.diskFree || 0;
+    accumulator.cpus += node.cpus ?? 0;
+    accumulator.sockets += node.sockets ?? 0;
+    accumulator.cores += node.totalCores ?? 0;
+    accumulator.threads += node.totalThreads ?? node.cpus ?? 0;
+    accumulator.memoryTotal += node.memoryTotal ?? 0;
+    accumulator.memoryUsed += node.memoryUsed ?? 0;
+    accumulator.memoryFree += node.memoryFree ?? 0;
+    accumulator.swapTotal += node.swapTotal ?? 0;
+    accumulator.swapUsed += node.swapUsed ?? 0;
+    accumulator.swapFree += node.swapFree ?? 0;
+    accumulator.diskTotal += node.diskTotal ?? 0;
+    accumulator.diskUsed += node.diskUsed ?? 0;
+    accumulator.diskFree += node.diskFree ?? 0;
     if (node.status === 'online') accumulator.online += 1;
     return accumulator;
   }, {
@@ -907,6 +976,26 @@ function requireAdminUser(req, res, next) {
   });
 }
 
+function requireResourceWriteAccess(req, res, next) {
+  if (!hasAnyUsers()) {
+    return res.status(503).json({
+      error: 'Nessun utente applicativo configurato. Completa il setup iniziale.',
+      code: 'SETUP_REQUIRED',
+    });
+  }
+  if (!req.authUser) {
+    return res.status(401).json({
+      error: 'Autenticazione richiesta.',
+      code: 'AUTH_REQUIRED',
+    });
+  }
+  if (canManageResources(req.authUser)) return next();
+  return res.status(403).json({
+    error: 'Permessi insufficienti. Questo account ha accesso in sola lettura.',
+    code: 'READ_ONLY_USER',
+  });
+}
+
 function requireAdminAccess(req, res, next) {
   if (req.authUser?.role === 'admin') return next();
   if (!APP_ADMIN_TOKEN) {
@@ -967,6 +1056,7 @@ app.get('/api/auth/status', (req, res) => {
     setupRequired: !hasAnyUsers(),
     authenticated: Boolean(req.authUser),
     user: req.authUser ? sanitizeUser(req.authUser) : null,
+    capabilities: req.authUser ? { canManageResources: canManageResources(req.authUser) } : { canManageResources: false },
   });
 });
 
@@ -1075,7 +1165,7 @@ app.put('/api/users/:userId', requireAdminUser, (req, res) => {
 
     const nextRole = req.body.role !== undefined ? validateRole(req.body.role) : existingUser.role;
     if (!nextRole) {
-      throw createHttpError(400, 'ROLE_INVALID', 'Ruolo non valido. Usare admin oppure operator.');
+      throw createHttpError(400, 'ROLE_INVALID', 'Ruolo non valido. Usare admin, operator oppure viewer.');
     }
 
     const nextDisabled = req.body.disabled !== undefined ? Boolean(req.body.disabled) : Boolean(existingUser.disabled);
@@ -1312,7 +1402,7 @@ app.get('/api/resources/:type/:node/:vmid', requireAuthenticatedUser, async (req
   }
 });
 
-app.post('/api/resources/:type/:node/:vmid/:action', requireAuthenticatedUser, async (req, res) => {
+app.post('/api/resources/:type/:node/:vmid/:action', requireResourceWriteAccess, async (req, res) => {
   const { type, node, vmid, action } = req.params;
   const allowedActions = new Set(['start', 'shutdown', 'reboot', 'stop', 'reset', 'unlock']);
   if (!['qemu', 'lxc'].includes(type)) {

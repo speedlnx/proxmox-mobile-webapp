@@ -14,6 +14,9 @@ export default function App() {
     authenticated: false,
     setupRequired: false,
     user: null,
+    capabilities: {
+      canManageResources: false,
+    },
   });
   const [authError, setAuthError] = useState('');
 
@@ -28,6 +31,7 @@ export default function App() {
         authenticated: Boolean(payload.authenticated),
         setupRequired: Boolean(payload.setupRequired),
         user: payload.user || null,
+        capabilities: payload.capabilities || { canManageResources: false },
       });
     } catch (error) {
       setAuthError(error.message);
@@ -36,6 +40,7 @@ export default function App() {
         authenticated: false,
         setupRequired: false,
         user: null,
+        capabilities: { canManageResources: false },
       });
     }
   }
@@ -110,11 +115,11 @@ export default function App() {
       </header>
       <main className="app-main">
         <Routes>
-          <Route path="/" element={<DashboardPage />} />
+          <Route path="/" element={<DashboardPage canManageResources={authState.capabilities.canManageResources} />} />
           <Route path="/storage" element={<StoragePage />} />
           <Route path="/settings" element={isAdmin ? <SettingsPage /> : <Navigate to="/" replace />} />
           <Route path="/users" element={isAdmin ? <UsersPage currentUser={authState.user} /> : <Navigate to="/" replace />} />
-          <Route path="/resource/:type/:node/:vmid" element={<DetailsPage />} />
+          <Route path="/resource/:type/:node/:vmid" element={<DetailsPage canManageResources={authState.capabilities.canManageResources} />} />
         </Routes>
       </main>
     </div>

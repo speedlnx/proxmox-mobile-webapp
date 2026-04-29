@@ -18,7 +18,22 @@ function formatBytes(value) {
   return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-export default function ResourceCard({ item, onAction, pendingAction }) {
+function UsageBar({ label, percentValue, detail }) {
+  return (
+    <div className="usage-meter">
+      <div className="usage-meter__labels">
+        <span>{label}</span>
+        <strong>{percentValue == null ? '—' : `${percentValue}%`}</strong>
+      </div>
+      <div className="usage-meter__bar" role="progressbar" aria-valuenow={percentValue ?? 0} aria-valuemin="0" aria-valuemax="100" aria-label={`${label} usage`}>
+        <div className="usage-meter__fill" style={{ width: `${percentValue ?? 0}%` }} />
+      </div>
+      <div className="usage-meter__detail">{detail}</div>
+    </div>
+  );
+}
+
+export default function ResourceCard({ item, onAction, pendingAction, canManageResources, compact = false }) {
   const cpu = item.cpu == null ? null : Math.round(item.cpu * 100);
   const ram = percent(item.mem, item.maxmem);
   const disk = percent(item.disk, item.maxdisk);
@@ -27,7 +42,7 @@ export default function ResourceCard({ item, onAction, pendingAction }) {
   const primaryLabel = item.status === 'running' ? 'Spegni' : 'Avvia';
 
   return (
-    <article className="resource-card">
+    <article className={`resource-card ${compact ? 'resource-card--compact' : ''}`}>
       <div className="resource-card__top">
         <div>
           <div className="resource-type">{item.type.toUpperCase()} · {item.node}</div>
@@ -38,31 +53,42 @@ export default function ResourceCard({ item, onAction, pendingAction }) {
         <StatusBadge status={item.status} lock={item.lock} />
       </div>
 
-      <div className="meters">
-        <div className="meter"><span>CPU</span><strong>{cpu == null ? '—' : `${cpu}%`}</strong></div>
-        <div className="meter"><span>RAM</span><strong>{ram == null ? '—' : `${ram}%`}</strong></div>
-        <div className="meter"><span>Disco</span><strong>{disk == null ? '—' : `${disk}%`}</strong></div>
-      </div>
-
-      <div className="resource-footnote">
-        <span>{formatBytes(item.mem)} / {formatBytes(item.maxmem)}</span>
-        <span>{formatBytes(item.disk)} / {formatBytes(item.maxdisk)}</span>
+      <div className="usage-stack">
+        <UsageBar
+          label="CPU"
+          percentValue={cpu}
+          detail={item.maxcpu ? `${item.maxcpu} vCPU disponibili` : 'Uso istantaneo CPU'}
+        />
+        <UsageBar
+          label="RAM"
+          percentValue={ram}
+          detail={`${formatBytes(item.mem)} / ${formatBytes(item.maxmem)}`}
+        />
+        <UsageBar
+          label="Disco"
+          percentValue={disk}
+          detail={`${formatBytes(item.disk)} / ${formatBytes(item.maxdisk)}`}
+        />
       </div>
 
       <div className="actions-row">
-        <button disabled={pendingAction} onClick={() => onAction(item, actionLabel)}>
-          {primaryLabel}
-        </button>
-        <button disabled={pendingAction} onClick={() => onAction(item, 'reboot')}>
-          Riavvia
-        </button>
-        <button disabled={pendingAction} onClick={() => onAction(item, 'reset')}>
-          Reset
-        </button>
-        {isLocked ? (
-          <button disabled={pendingAction} className="danger-button" onClick={() => onAction(item, 'unlock')}>
-            Unlock
-          </button>
+        {canManageResources ? (
+          <>
+            <button disabled={pendingAction} onClick={() => onAction(item, actionLabel)}>
+              {primaryLabel}
+            </button>
+            <button disabled={pendingAction} onClick={() => onAction(item, 'reboot')}>
+              Riavvia
+            </button>
+            <button disabled={pendingAction} onClick={() => onAction(item, 'reset')}>
+              Reset
+            </button>
+            {isLocked ? (
+              <button disabled={pendingAction} className="danger-button" onClick={() => onAction(item, 'unlock')}>
+                Unlock
+              </button>
+            ) : null}
+          </>
         ) : null}
         <Link className="details-link" to={`/resource/${item.type}/${item.node}/${item.vmid}`}>
           Dettagli
