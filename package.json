@@ -1,7 +1,7 @@
 {
   "name": "proxmox-mobile-webapp",
   "private": true,
-  "version": "0.8.2",
+  "version": "0.8.3",
   "workspaces": ["server", "client"],
   "scripts": {
     "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",

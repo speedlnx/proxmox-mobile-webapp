@@ -3,7 +3,7 @@ import { Navigate, NavLink, Route, Routes } from 'react-router-dom';
 import DashboardPage from './pages/DashboardPage';
 import DetailsPage from './pages/DetailsPage';
 import SettingsPage from './pages/SettingsPage';
-import StoragePage from './pages/StoragePage';
+import ClusterPage from './pages/StoragePage';
 import TasksPage from './pages/TasksPage';
 import LoginPage from './pages/LoginPage';
 import SetupPage from './pages/SetupPage';
@@ -146,8 +146,8 @@ export default function App() {
           <NavLink to="/" className="header-link">
             Dashboard
           </NavLink>
-          <NavLink to="/storage" className="header-link">
-            Storage
+          <NavLink to="/cluster" className="header-link">
+            Cluster
           </NavLink>
           <NavLink to="/tasks" className="header-link">
             Task
@@ -174,7 +174,8 @@ export default function App() {
       <main className="app-main">
         <Routes>
           <Route path="/" element={<DashboardPage canManageResources={authState.capabilities.canManageResources} />} />
-          <Route path="/storage" element={<StoragePage />} />
+          <Route path="/cluster" element={<ClusterPage />} />
+          <Route path="/storage" element={<Navigate to="/cluster" replace />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/settings" element={isAdmin ? <SettingsPage /> : <Navigate to="/" replace />} />
           <Route path="/users" element={isAdmin ? <UsersPage currentUser={authState.user} /> : <Navigate to="/" replace />} />

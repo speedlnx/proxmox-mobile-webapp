@@ -23,8 +23,29 @@ function resolveAvailable(item) {
   return null;
 }
 
-export default function StoragePage() {
+function formatLoad(loadavg) {
+  if (!loadavg?.length) return '—';
+  return loadavg.map((value) => Number(value).toFixed(2)).join(' / ');
+}
+
+function UsageBar({ label, percentValue, detail }) {
+  return (
+    <div className="usage-meter">
+      <div className="usage-meter__labels">
+        <span>{label}</span>
+        <strong>{percentValue == null ? '—' : `${percentValue}%`}</strong>
+      </div>
+      <div className="usage-meter__bar" role="progressbar" aria-valuenow={percentValue ?? 0} aria-valuemin="0" aria-valuemax="100" aria-label={`${label} usage`}>
+        <div className="usage-meter__fill" style={{ width: `${percentValue ?? 0}%` }} />
+      </div>
+      <div className="usage-meter__detail">{detail}</div>
+    </div>
+  );
+}
+
+export default function ClusterPage() {
   const [items, setItems] = useState([]);
+  const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -40,10 +61,22 @@ export default function StoragePage() {
       }
 
       try {
-        const response = await fetch('/api/storages');
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || 'Errore nel caricamento degli storage');
+        const [storageResponse, overviewResponse] = await Promise.all([
+          fetch('/api/storages'),
+          fetch('/api/overview').catch(() => null),
+        ]);
+        const payload = await storageResponse.json();
+        if (!storageResponse.ok) throw new Error(payload.error || 'Errore nel caricamento del cluster');
+        const overviewPayload = overviewResponse
+          ? {
+              ok: overviewResponse.ok,
+              data: await overviewResponse.json(),
+            }
+          : null;
         setItems(payload.items);
+        if (overviewPayload?.ok) {
+          setOverview(overviewPayload.data);
+        }
         hasDataRef.current = true;
         setError('');
       } catch (err) {
@@ -71,7 +104,74 @@ export default function StoragePage() {
       <div className={`toolbar-status ${refreshing ? 'is-visible' : ''}`}>
         Aggiornamento in background…
       </div>
-      {loading ? <div className="empty-state">Caricamento storage…</div> : null}
+      {overview ? (
+        <div className="details-card overview-card">
+          <div className="resource-card__top">
+            <div>
+              <div className="resource-type">Cluster overview</div>
+              <h2>Cluster e Hypervisor</h2>
+              <div className="resource-meta">
+                Nodi online {overview.summary.online}/{overview.summary.nodes}
+              </div>
+            </div>
+          </div>
+
+          <div className="details-grid overview-grid">
+            <div><span>CPU logiche</span><strong>{overview.summary.cpus ?? '—'}</strong></div>
+            <div><span>Socket</span><strong>{overview.summary.sockets ?? '—'}</strong></div>
+            <div><span>Core totali</span><strong>{overview.summary.cores ?? '—'}</strong></div>
+            <div><span>Thread totali</span><strong>{overview.summary.threads ?? '—'}</strong></div>
+            <div><span>RAM totale</span><strong>{formatBytes(overview.summary.memoryTotal)}</strong></div>
+            <div><span>RAM disponibile</span><strong>{formatBytes(overview.summary.memoryFree)}</strong></div>
+            <div><span>Swap totale</span><strong>{formatBytes(overview.summary.swapTotal)}</strong></div>
+            <div><span>Swap libera</span><strong>{formatBytes(overview.summary.swapFree)}</strong></div>
+            <div><span>Disco totale</span><strong>{formatBytes(overview.summary.diskTotal)}</strong></div>
+            <div><span>Disco libero</span><strong>{formatBytes(overview.summary.diskFree)}</strong></div>
+          </div>
+
+          <div className="overview-node-list">
+            {overview.nodes.map((node) => (
+              <div className="overview-node-card" key={node.node}>
+                <div className="resource-card__top">
+                  <div>
+                    <strong>{node.node}</strong>
+                    <div className="resource-meta">
+                      CPU {node.cpus ?? '—'} · Socket {node.sockets ?? '—'} · Core {node.totalCores ?? '—'} · Thread {node.totalThreads ?? '—'}
+                    </div>
+                  </div>
+                  <span className={`status-badge ${node.status === 'online' ? 'status-running' : 'status-stopped'}`}>
+                    {node.status}
+                  </span>
+                </div>
+                <div className="usage-stack overview-usage-stack">
+                  <UsageBar
+                    label="CPU"
+                    percentValue={node.cpuUsage == null ? null : Math.round(node.cpuUsage * 100)}
+                    detail={node.totalThreads ? `${node.totalThreads} thread logici` : 'Uso istantaneo CPU'}
+                  />
+                  <UsageBar
+                    label="RAM"
+                    percentValue={percent(node.memoryUsed, node.memoryTotal)}
+                    detail={`${formatBytes(node.memoryUsed)} / ${formatBytes(node.memoryTotal)}`}
+                  />
+                </div>
+                <div className="overview-node-stats">
+                  <span>Load: {formatLoad(node.loadavg)}</span>
+                  <span>Swap: {formatBytes(node.swapUsed)} / {formatBytes(node.swapTotal)}</span>
+                  <span>Disco: {formatBytes(node.diskUsed)} / {formatBytes(node.diskTotal)}</span>
+                  {node.diagnostics?.missingCpuTopology || node.diagnostics?.missingSwap || node.diagnostics?.missingLoad ? (
+                    <span className="overview-diagnostic">
+                      Alcuni dati nodo non sono disponibili via API. Verifica `Sys.Audit` sul path `/nodes/{node.node}` o i permessi effettivi del token.
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {loading ? <div className="empty-state">Caricamento cluster…</div> : null}
       {error ? <div className="empty-state error">{error}</div> : null}
       {!loading && !error && items.length === 0 ? <div className="empty-state">Nessuno storage trovato</div> : null}
 

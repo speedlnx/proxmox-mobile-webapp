@@ -1,6 +1,6 @@
 # Proxmox Mobile WebApp
 
-Versione corrente: `0.8.2`
+Versione corrente: `0.8.3`
 
 Proxmox Mobile WebApp e' una webapp amministrativa mobile-first per Proxmox VE. Permette di accedere in modo sicuro a VM QEMU, container LXC e storage del cluster tramite un backend Node.js che centralizza autenticazione Proxmox, configurazione persistente, controllo accessi applicativo e API operative pensate per uso da smartphone, tablet o browser desktop.
 
@@ -47,6 +47,8 @@ L'architettura e' pensata per essere pubblicata come servizio singolo dietro rev
 - barre di utilizzo CPU e RAM anche nella scheda dei nodi hypervisor
 - nuova sezione Task per monitorare operazioni Proxmox, task in corso ed errori
 - miglioramenti responsive per la pagina Task su mobile
+- nuova sezione `Cluster` che unifica overview hypervisor e stato storage
+- dashboard alleggerita con una sola scheda sottile di stato cluster
 
 ## Architettura
 
@@ -78,6 +80,7 @@ Ruoli applicativi:
 
 ### Operativita' Proxmox
 
+- dashboard focalizzata sulle macchine con indicatore rapido dello stato cluster in cima
 - elenco di VM QEMU e container LXC non template
 - ricerca per nome, nodo o VMID
 - filtro per tipo risorsa
@@ -124,8 +127,13 @@ Ruoli applicativi:
 - barre grafiche per utilizzo CPU e RAM di ogni hypervisor
 - diagnostica visiva quando l'API del token non restituisce topologia CPU, swap o load
 
-### Storage
+### Cluster
 
+- vista dedicata cluster che unisce:
+  - overview hypervisor
+  - metriche aggregate cluster
+  - storage del cluster
+- riepilogo dettagliato dei nodi hypervisor fuori dalla dashboard principale
 - vista dedicata degli storage del cluster
 - stato storage
 - utilizzo percentuale

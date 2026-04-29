@@ -4,43 +4,6 @@ import ResourceCard from '../components/ResourceCard';
 
 const DISPLAY_MODE_STORAGE_KEY = 'pmw_dashboard_display_mode';
 
-function formatBytes(value) {
-  if (value == null) return '—';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let n = value;
-  let i = 0;
-  while (n >= 1024 && i < units.length - 1) {
-    n /= 1024;
-    i += 1;
-  }
-  return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-function formatLoad(loadavg) {
-  if (!loadavg?.length) return '—';
-  return loadavg.map((value) => Number(value).toFixed(2)).join(' / ');
-}
-
-function percent(current, total) {
-  if (!total || current == null) return null;
-  return Math.min(100, Math.round((current / total) * 100));
-}
-
-function UsageBar({ label, percentValue, detail }) {
-  return (
-    <div className="usage-meter">
-      <div className="usage-meter__labels">
-        <span>{label}</span>
-        <strong>{percentValue == null ? '—' : `${percentValue}%`}</strong>
-      </div>
-      <div className="usage-meter__bar" role="progressbar" aria-valuenow={percentValue ?? 0} aria-valuemin="0" aria-valuemax="100" aria-label={`${label} usage`}>
-        <div className="usage-meter__fill" style={{ width: `${percentValue ?? 0}%` }} />
-      </div>
-      <div className="usage-meter__detail">{detail}</div>
-    </div>
-  );
-}
-
 export default function DashboardPage({ canManageResources }) {
   const [items, setItems] = useState([]);
   const [overview, setOverview] = useState(null);
@@ -145,68 +108,18 @@ export default function DashboardPage({ canManageResources }) {
   return (
     <section>
       {overview ? (
-        <div className="details-card overview-card">
-          <div className="resource-card__top">
+        <div className="details-card cluster-status-card">
+          <div className="cluster-status-card__content">
             <div>
-              <div className="resource-type">Cluster overview</div>
-              <h2>Riepilogo Hypervisor</h2>
-              <div className="resource-meta">
-                Nodi online {overview.summary.online}/{overview.summary.nodes}
-              </div>
+              <div className="resource-type">Cluster status</div>
+              <strong>Stato cluster</strong>
             </div>
-          </div>
-
-          <div className="details-grid overview-grid">
-            <div><span>CPU logiche</span><strong>{overview.summary.cpus ?? '—'}</strong></div>
-            <div><span>Socket</span><strong>{overview.summary.sockets ?? '—'}</strong></div>
-            <div><span>Core totali</span><strong>{overview.summary.cores ?? '—'}</strong></div>
-            <div><span>Thread totali</span><strong>{overview.summary.threads ?? '—'}</strong></div>
-            <div><span>RAM totale</span><strong>{formatBytes(overview.summary.memoryTotal)}</strong></div>
-            <div><span>RAM disponibile</span><strong>{formatBytes(overview.summary.memoryFree)}</strong></div>
-            <div><span>Swap totale</span><strong>{formatBytes(overview.summary.swapTotal)}</strong></div>
-            <div><span>Swap libera</span><strong>{formatBytes(overview.summary.swapFree)}</strong></div>
-            <div><span>Disco totale</span><strong>{formatBytes(overview.summary.diskTotal)}</strong></div>
-            <div><span>Disco libero</span><strong>{formatBytes(overview.summary.diskFree)}</strong></div>
-          </div>
-
-          <div className="overview-node-list">
-            {overview.nodes.map((node) => (
-              <div className="overview-node-card" key={node.node}>
-                <div className="resource-card__top">
-                  <div>
-                    <strong>{node.node}</strong>
-                    <div className="resource-meta">
-                      CPU {node.cpus ?? '—'} · Socket {node.sockets ?? '—'} · Core {node.totalCores ?? '—'} · Thread {node.totalThreads ?? '—'}
-                    </div>
-                  </div>
-                  <span className={`status-badge ${node.status === 'online' ? 'status-running' : 'status-stopped'}`}>
-                    {node.status}
-                  </span>
-                </div>
-                <div className="usage-stack overview-usage-stack">
-                  <UsageBar
-                    label="CPU"
-                    percentValue={node.cpuUsage == null ? null : Math.round(node.cpuUsage * 100)}
-                    detail={node.totalThreads ? `${node.totalThreads} thread logici` : 'Uso istantaneo CPU'}
-                  />
-                  <UsageBar
-                    label="RAM"
-                    percentValue={percent(node.memoryUsed, node.memoryTotal)}
-                    detail={`${formatBytes(node.memoryUsed)} / ${formatBytes(node.memoryTotal)}`}
-                  />
-                </div>
-                <div className="overview-node-stats">
-                  <span>Load: {formatLoad(node.loadavg)}</span>
-                  <span>Swap: {formatBytes(node.swapUsed)} / {formatBytes(node.swapTotal)}</span>
-                  <span>Disco: {formatBytes(node.diskUsed)} / {formatBytes(node.diskTotal)}</span>
-                  {node.diagnostics?.missingCpuTopology || node.diagnostics?.missingSwap || node.diagnostics?.missingLoad ? (
-                    <span className="overview-diagnostic">
-                      Alcuni dati nodo non sono disponibili via API. Verifica `Sys.Audit` sul path `/nodes/{node.node}` o i permessi effettivi del token.
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-            ))}
+            <div className="cluster-status-card__meta">
+              <span className={`status-badge ${overview.summary.online === overview.summary.nodes ? 'status-running' : 'status-paused'}`}>
+                {overview.summary.online}/{overview.summary.nodes} nodi online
+              </span>
+              <Link to="/cluster" className="cluster-status-card__link">Apri cluster</Link>
+            </div>
           </div>
         </div>
       ) : null}
