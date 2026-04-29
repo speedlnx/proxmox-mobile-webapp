@@ -9,6 +9,60 @@ import LoginPage from './pages/LoginPage';
 import SetupPage from './pages/SetupPage';
 import UsersPage from './pages/UsersPage';
 
+function ScrollJumpButton() {
+  const [scrollState, setScrollState] = useState({
+    visible: false,
+    direction: 'down',
+  });
+
+  useEffect(() => {
+    function updateScrollState() {
+      const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+      const viewportHeight = window.innerHeight || 0;
+      const documentHeight = document.documentElement.scrollHeight || 0;
+      const maxScroll = Math.max(0, documentHeight - viewportHeight);
+      const hasScrollableContent = maxScroll > 160;
+      const progress = maxScroll > 0 ? scrollTop / maxScroll : 0;
+
+      setScrollState({
+        visible: hasScrollableContent,
+        direction: progress > 0.55 ? 'up' : 'down',
+      });
+    }
+
+    updateScrollState();
+    window.addEventListener('scroll', updateScrollState, { passive: true });
+    window.addEventListener('resize', updateScrollState);
+    return () => {
+      window.removeEventListener('scroll', updateScrollState);
+      window.removeEventListener('resize', updateScrollState);
+    };
+  }, []);
+
+  function handleJump() {
+    const isUp = scrollState.direction === 'up';
+    window.scrollTo({
+      top: isUp ? 0 : document.documentElement.scrollHeight,
+      behavior: 'smooth',
+    });
+  }
+
+  if (!scrollState.visible) return null;
+
+  const isUp = scrollState.direction === 'up';
+  return (
+    <button
+      type="button"
+      className="scroll-jump-button"
+      onClick={handleJump}
+      aria-label={isUp ? 'Torna in alto' : 'Vai in fondo'}
+      title={isUp ? 'Torna in alto' : 'Vai in fondo'}
+    >
+      {isUp ? '↑' : '↓'}
+    </button>
+  );
+}
+
 export default function App() {
   const [authState, setAuthState] = useState({
     loading: true,
@@ -127,6 +181,7 @@ export default function App() {
           <Route path="/resource/:type/:node/:vmid" element={<DetailsPage canManageResources={authState.capabilities.canManageResources} />} />
         </Routes>
       </main>
+      <ScrollJumpButton />
     </div>
   );
 }

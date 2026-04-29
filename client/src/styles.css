@@ -101,6 +101,24 @@ select {
   font-size: .75rem;
   letter-spacing: .04em;
 }
+.scroll-jump-button {
+  position: fixed;
+  right: 16px;
+  bottom: 20px;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  background: rgba(79, 140, 255, .92);
+  color: #fff;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .28);
+  z-index: 50;
+  font-size: 1.3rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(10px);
+}
 .toolbar {
   display: grid;
   gap: 12px;
@@ -328,6 +346,29 @@ select {
   display: grid;
   gap: 14px;
 }
+.task-page {
+  min-width: 0;
+}
+.task-card {
+  min-width: 0;
+}
+.task-card h2,
+.task-card .resource-meta,
+.task-card .resource-type,
+.task-card strong,
+.task-card pre {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.task-card .resource-card__top {
+  gap: 10px;
+}
+.task-card .status-badge {
+  flex-shrink: 0;
+}
+.task-status-filters button {
+  min-width: 0;
+}
 .storage-usage {
   display: grid;
   gap: 8px;
@@ -515,6 +556,34 @@ select {
   .app-header { flex-direction: column; }
   .usage-stack, .actions-row, .resource-footnote, .details-grid, .settings-actions { grid-template-columns: 1fr; }
   .card-grid--compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .task-status-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .task-status-filters button {
+    padding: 10px 8px;
+    font-size: .9rem;
+  }
+  .task-card {
+    padding: 14px;
+  }
+  .task-card h2 {
+    font-size: 1rem;
+    line-height: 1.25;
+  }
+  .task-card .resource-meta,
+  .task-card .resource-type {
+    font-size: .82rem;
+  }
+  .task-card .status-badge {
+    padding: 6px 10px;
+    font-size: .78rem;
+  }
+  .scroll-jump-button {
+    right: 12px;
+    bottom: 16px;
+    width: 44px;
+    height: 44px;
+  }
   .settings-hero {
     flex-direction: column;
   }

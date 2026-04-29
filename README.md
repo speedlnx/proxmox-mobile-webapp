@@ -1,6 +1,6 @@
 # Proxmox Mobile WebApp
 
-Versione corrente: `0.8.1`
+Versione corrente: `0.8.2`
 
 Proxmox Mobile WebApp e' una webapp amministrativa mobile-first per Proxmox VE. Permette di accedere in modo sicuro a VM QEMU, container LXC e storage del cluster tramite un backend Node.js che centralizza autenticazione Proxmox, configurazione persistente, controllo accessi applicativo e API operative pensate per uso da smartphone, tablet o browser desktop.
 
@@ -36,6 +36,7 @@ L'architettura e' pensata per essere pubblicata come servizio singolo dietro rev
 - filtro dashboard per guest accesi, spenti o locked
 - modalita' compatta dashboard con 2 schede per riga
 - miglioramenti grafici alla vista compatta con badge stato ridotto a indicatore circolare e gestione robusta dei nomi lunghi
+- pulsante flottante per saltare rapidamente in alto o in fondo alla pagina
 - visualizzazione note delle VM e degli LXC
 - azioni aggiuntive `reset` e `unlock`
 - nuova sezione per lo stato degli storage
@@ -43,7 +44,9 @@ L'architettura e' pensata per essere pubblicata come servizio singolo dietro rev
 - aggiornamento live piu' frequente delle metriche guest e overview
 - supporto installazione come web app/PWA con manifest, icone e service worker
 - riepilogo cluster/hypervisor con CPU, core, thread, RAM, swap, disco e load
+- barre di utilizzo CPU e RAM anche nella scheda dei nodi hypervisor
 - nuova sezione Task per monitorare operazioni Proxmox, task in corso ed errori
+- miglioramenti responsive per la pagina Task su mobile
 
 ## Architettura
 
@@ -118,6 +121,7 @@ Ruoli applicativi:
 - disco totale e disponibile
 - load average per nodo
 - dettaglio sintetico per singolo nodo
+- barre grafiche per utilizzo CPU e RAM di ogni hypervisor
 - diagnostica visiva quando l'API del token non restituisce topologia CPU, swap o load
 
 ### Storage
@@ -155,6 +159,13 @@ Ruoli applicativi:
   - stato raw restituito da Proxmox
 - coda del log per i task falliti
 - fallback automatico da `/cluster/tasks` a `/nodes/{node}/tasks` se la vista cluster-wide non e' supportata o il token non la espone correttamente
+- layout corretto anche su mobile con filtri adattivi e prevenzione del taglio laterale
+
+### Navigazione rapida
+
+- pulsante flottante globale per:
+  - andare rapidamente in fondo pagina
+  - tornare in alto con un tocco
 
 ### Web App
 

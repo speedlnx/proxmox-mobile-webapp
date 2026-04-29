@@ -21,6 +21,26 @@ function formatLoad(loadavg) {
   return loadavg.map((value) => Number(value).toFixed(2)).join(' / ');
 }
 
+function percent(current, total) {
+  if (!total || current == null) return null;
+  return Math.min(100, Math.round((current / total) * 100));
+}
+
+function UsageBar({ label, percentValue, detail }) {
+  return (
+    <div className="usage-meter">
+      <div className="usage-meter__labels">
+        <span>{label}</span>
+        <strong>{percentValue == null ? '—' : `${percentValue}%`}</strong>
+      </div>
+      <div className="usage-meter__bar" role="progressbar" aria-valuenow={percentValue ?? 0} aria-valuemin="0" aria-valuemax="100" aria-label={`${label} usage`}>
+        <div className="usage-meter__fill" style={{ width: `${percentValue ?? 0}%` }} />
+      </div>
+      <div className="usage-meter__detail">{detail}</div>
+    </div>
+  );
+}
+
 export default function DashboardPage({ canManageResources }) {
   const [items, setItems] = useState([]);
   const [overview, setOverview] = useState(null);
@@ -163,9 +183,20 @@ export default function DashboardPage({ canManageResources }) {
                     {node.status}
                   </span>
                 </div>
+                <div className="usage-stack overview-usage-stack">
+                  <UsageBar
+                    label="CPU"
+                    percentValue={node.cpuUsage == null ? null : Math.round(node.cpuUsage * 100)}
+                    detail={node.totalThreads ? `${node.totalThreads} thread logici` : 'Uso istantaneo CPU'}
+                  />
+                  <UsageBar
+                    label="RAM"
+                    percentValue={percent(node.memoryUsed, node.memoryTotal)}
+                    detail={`${formatBytes(node.memoryUsed)} / ${formatBytes(node.memoryTotal)}`}
+                  />
+                </div>
                 <div className="overview-node-stats">
                   <span>Load: {formatLoad(node.loadavg)}</span>
-                  <span>RAM: {formatBytes(node.memoryUsed)} / {formatBytes(node.memoryTotal)}</span>
                   <span>Swap: {formatBytes(node.swapUsed)} / {formatBytes(node.swapTotal)}</span>
                   <span>Disco: {formatBytes(node.diskUsed)} / {formatBytes(node.diskTotal)}</span>
                   {node.diagnostics?.missingCpuTopology || node.diagnostics?.missingSwap || node.diagnostics?.missingLoad ? (

@@ -101,7 +101,7 @@ export default function TasksPage() {
   }, [items, search, statusFilter, typeFilter]);
 
   return (
-    <section className="details-page">
+    <section className="details-page task-page">
       <div className="details-card">
         <div className="resource-type">Task monitor</div>
         <h2>Task Proxmox e UPID</h2>
@@ -113,7 +113,7 @@ export default function TasksPage() {
         <div className={`toolbar-status ${refreshing ? 'is-visible' : ''}`}>
           Aggiornamento task in background…
         </div>
-        <div className="segmented segmented-quad">
+        <div className="segmented segmented-quad task-status-filters">
           <button className={statusFilter === 'all' ? 'active' : ''} onClick={() => setStatusFilter('all')}>Tutti</button>
           <button className={statusFilter === 'running' ? 'active' : ''} onClick={() => setStatusFilter('running')}>In corso</button>
           <button className={statusFilter === 'ok' ? 'active' : ''} onClick={() => setStatusFilter('ok')}>OK</button>
@@ -135,7 +135,7 @@ export default function TasksPage() {
       {!loading && !error && filteredItems.length === 0 ? <div className="empty-state">Nessun task trovato</div> : null}
 
       {filteredItems.map((item) => (
-        <article className="details-card" key={item.upid}>
+        <article className="details-card task-card" key={item.upid}>
           <div className="resource-card__top">
             <div>
               <div className="resource-type">{formatTaskType(item.type)} · {item.node || 'nodo sconosciuto'}</div>
