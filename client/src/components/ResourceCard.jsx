@@ -50,7 +50,7 @@ export default function ResourceCard({ item, onAction, pendingAction, canManageR
           <div className="resource-meta">VMID {item.vmid}</div>
           {isLocked ? <div className="resource-lock">Locked: {item.lock}</div> : null}
         </div>
-        <StatusBadge status={item.status} lock={item.lock} />
+        <StatusBadge status={item.status} lock={item.lock} compact={compact} />
       </div>
 
       <div className="usage-stack">

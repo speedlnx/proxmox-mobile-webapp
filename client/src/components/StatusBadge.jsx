@@ -1,6 +1,14 @@
-export default function StatusBadge({ status, lock }) {
+export default function StatusBadge({ status, lock, compact = false }) {
   if (lock) {
-    return <span className="status-badge status-locked">Locked</span>;
+    return (
+      <span
+        className={`status-badge status-locked ${compact ? 'status-badge--compact' : ''}`}
+        aria-label="Locked"
+        title="Locked"
+      >
+        {compact ? '' : 'Locked'}
+      </span>
+    );
   }
 
   const normalized = String(status || 'unknown').toLowerCase();
@@ -9,5 +17,14 @@ export default function StatusBadge({ status, lock }) {
     stopped: 'Spento',
     paused: 'In pausa',
   };
-  return <span className={`status-badge status-${normalized}`}>{labelMap[normalized] || status}</span>;
+  const label = labelMap[normalized] || status;
+  return (
+    <span
+      className={`status-badge status-${normalized} ${compact ? 'status-badge--compact' : ''}`}
+      aria-label={label}
+      title={label}
+    >
+      {compact ? '' : label}
+    </span>
+  );
 }

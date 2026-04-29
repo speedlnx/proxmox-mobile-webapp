@@ -1,6 +1,6 @@
 # Proxmox Mobile WebApp
 
-Versione corrente: `0.8.0`
+Versione corrente: `0.8.1`
 
 Proxmox Mobile WebApp e' una webapp amministrativa mobile-first per Proxmox VE. Permette di accedere in modo sicuro a VM QEMU, container LXC e storage del cluster tramite un backend Node.js che centralizza autenticazione Proxmox, configurazione persistente, controllo accessi applicativo e API operative pensate per uso da smartphone, tablet o browser desktop.
 
@@ -35,6 +35,7 @@ L'architettura e' pensata per essere pubblicata come servizio singolo dietro rev
 - diagnostica piu' esplicita quando il token non restituisce topologia CPU o metriche nodo complete
 - filtro dashboard per guest accesi, spenti o locked
 - modalita' compatta dashboard con 2 schede per riga
+- miglioramenti grafici alla vista compatta con badge stato ridotto a indicatore circolare e gestione robusta dei nomi lunghi
 - visualizzazione note delle VM e degli LXC
 - azioni aggiuntive `reset` e `unlock`
 - nuova sezione per lo stato degli storage
